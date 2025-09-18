@@ -86,6 +86,5 @@ The pipeline ingests CSV files of review cases, extracts structured information,
   "ASJC_conf": 0.61,
   "ASJC_uncertain": false,
   "len_words": 723,
-  "time_iso": "2025-09-16T12:03:00+00:00",
-  "email_hash": "3fa4c1bde91c"
+  "time_iso": "2025-09-16T12:03:00+00:00"
 }
