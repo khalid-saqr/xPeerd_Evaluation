@@ -1,6 +1,5 @@
 # === xPeerd Pipeline (Clean Fixed Version with Revised Plotting) ===
 # CSV → JSON(cases) → ASJC Supergroups → Analytics/Stats → JSON(results) → PNG Figures
-# Colab-ready
 
 import os, re, json, glob, math
 from datetime import datetime, UTC
