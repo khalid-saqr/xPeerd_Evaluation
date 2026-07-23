@@ -115,18 +115,9 @@ For record $i$, define:
 
 The locked cohort is
 
-$$
-\mathcal{I}
-=
-\left\{
-i:
-n_H(i)=2
-\land
-n_X(i)=2
-\land
-m(i)=1
-\right\}.
-$$
+```math
+\mathcal{I}=\left\{i:\ n_H(i)=2\ \land\ n_X(i)=2\ \land\ m(i)=1\right\}.
+```
 
 Criteria are applied sequentially and are mutually exclusive:
 
@@ -143,9 +134,9 @@ Criteria are applied sequentially and are mutually exclusive:
 
 The comparative dataset contains
 
-$$
-271\times(2\ \text{Human}+2\ \text{xPeerd})=1{,}084
-$$
+```math
+271\times\left(2\ \mathrm{Human}+2\ \mathrm{xPeerd}\right)=1{,}084
+```
 
 reports. Missing xPeerd reports are never imputed or reconstructed.
 
@@ -167,9 +158,9 @@ The nine categories are:
 
 For a report with $U$ extracted units and $W$ words, concern density is
 
-$$
+```math
 D=\frac{1000U}{\max(1,W)}.
-$$
+```
 
 Reports with no extracted concern units remain explicit in the analysis with zero-valued unit-derived features.
 
@@ -192,25 +183,21 @@ Manuscripts are split into 160-word chunks with a 40-word overlap. Concern units
 
 For concern unit $u$, let $p^*(u)$ be the manuscript chunk with maximum TF–IDF cosine similarity:
 
-$$
-s_{\mathrm{TFIDF}}(u)
-=
-\cos\!\left(\mathbf{v}_u,\mathbf{v}_{p^*(u)}\right).
-$$
+```math
+s_{\mathrm{TFIDF}}(u)=\cos\!\left(\mathbf{v}_u,\mathbf{v}_{p^*(u)}\right).
+```
 
 For non-stopword content-token sets $C_u$ and $P_{p^*(u)}$,
 
-$$
-o_{\mathrm{token}}(u)
-=
-\frac{|C_u\cap P_{p^*(u)}|}{\max(1,|C_u|)}.
-$$
+```math
+o_{\mathrm{token}}(u)=\frac{\left|C_u\cap P_{p^*(u)}\right|}{\max\!\left(1,\left|C_u\right|\right)}.
+```
 
 The locked proxy is
 
-$$
+```math
 A(u)=0.75\,s_{\mathrm{TFIDF}}(u)+0.25\,o_{\mathrm{token}}(u).
-$$
+```
 
 This measures textual attestation to manuscript content, not scientific validity.
 
@@ -218,60 +205,53 @@ This measures textual attestation to manuscript content, not scientific validity
 
 If report $r$ contains $B_r$ distinct categories,
 
-$$
+```math
 C_r=\frac{B_r}{9}.
-$$
+```
 
 ## Unique human–xPeerd concern correspondence
 
 For each manuscript, human and xPeerd concern units use the same sublinear unigram/bigram TF–IDF space. Let
 
-$$
-S_{uv}=\cos(\mathbf{v}^{H}_{u},\mathbf{v}^{X}_{v})
-$$
+```math
+S_{uv}=\cos\!\left(\mathbf{v}^{H}_{u},\mathbf{v}^{X}_{v}\right)
+```
 
 be the cross-source similarity matrix. Hungarian linear assignment selects
 
-$$
-\pi^*=\arg\max_{\pi}\sum_{(u,v)\in\pi}S_{uv}.
-$$
+```math
+\pi^*=\underset{\pi}{\operatorname{arg\,max}}\ \sum_{(u,v)\in\pi}S_{uv}.
+```
 
 At threshold $\tau$,
 
-$$
-M_\tau=\{(u,v)\in\pi^*:S_{uv}\ge\tau\}.
-$$
+```math
+M_{\tau}=\left\{(u,v)\in\pi^*:S_{uv}\ge\tau\right\}.
+```
 
 The primary threshold is $\tau=0.35$, with sensitivity analysis over
 
-$$
-\tau\in\{0.25,0.30,0.35,0.40,0.45,0.50\}.
-$$
+```math
+\tau\in\left\{0.25,0.30,0.35,0.40,0.45,0.50\right\}.
+```
 
 The directional correspondence proxies are
 
-$$
-\text{Human recovery proxy}
-=
-\frac{|M_{0.35}|}{\max(1,U_H)},
-$$
+```math
+\mathrm{Human\ recovery\ proxy}=\frac{|M_{0.35}|}{\max(1,U_H)},
+```
 
-$$
-\text{xPeerd alignment proxy}
-=
-\frac{|M_{0.35}|}{\max(1,U_X)},
-$$
+```math
+\mathrm{xPeerd\ alignment\ proxy}=\frac{|M_{0.35}|}{\max(1,U_X)},
+```
 
 where $U_H$ and $U_X$ are human and xPeerd concern-unit counts. These are not precision or recall against scientific ground truth.
 
 Within-source redundancy is
 
-$$
-R_{\mathrm{dup}}
-=
-\frac{\#\{\text{assigned reviewer-unit pairs with }S\ge0.35\}}
-{\max(1,\min(U_1,U_2))}.
-$$
+```math
+R_{\mathrm{dup}}=\frac{\#\left\{\text{assigned reviewer-unit pairs with }S\ge0.35\right\}}{\max\!\left(1,\min(U_1,U_2)\right)}.
+```
 
 ## Deterministic and probabilistic stress tests
 
@@ -281,19 +261,17 @@ Association, agreement and source differences are reported separately.
 
 For paired manuscript-level measurements $H_i$ and $X_i$,
 
-$$
-d_i=X_i-H_i,
-\qquad
-\Delta=\frac{1}{N}\sum_{i=1}^{N}d_i.
-$$
+```math
+d_i=X_i-H_i,\qquad \Delta=\frac{1}{N}\sum_{i=1}^{N}d_i.
+```
 
 The package reports the paired mean difference, percentile bootstrap 95% interval, Wilcoxon signed-rank test, paired rank-biserial effect size and a two-sided sign-flip permutation test.
 
 For $B=1{,}999$ sign flips, the Monte Carlo value is
 
-$$
-p=\frac{1+\#\{|\bar d^{*}|\ge|\bar d|\}}{B+1}.
-$$
+```math
+p=\frac{1+\#\left\{|\bar d^{*}|\ge|\bar d|\right\}}{B+1}.
+```
 
 ### Association and agreement
 
@@ -309,51 +287,39 @@ For each paired metric, TRACE-R reports:
 
 Lin's concordance coefficient is
 
-$$
-\rho_c
-=
-\frac{2s_{HX}}
-{s_H^2+s_X^2+(\bar H-\bar X)^2}.
-$$
+```math
+\rho_c=\frac{2s_{HX}}{s_H^2+s_X^2+(\bar H-\bar X)^2}.
+```
 
 Error and bias measures are
 
-$$
+```math
 \operatorname{MAE}=\frac{1}{N}\sum_{i=1}^{N}|X_i-H_i|,
-$$
+```
 
-$$
+```math
 \operatorname{RMSE}=\sqrt{\frac{1}{N}\sum_{i=1}^{N}(X_i-H_i)^2},
-$$
+```
 
-$$
-\text{bias}=\bar d,
-\qquad
-\text{limits of agreement}=\bar d\pm1.96s_d.
-$$
+```math
+\mathrm{bias}=\bar d,\qquad \mathrm{limits\ of\ agreement}=\bar d\pm1.96s_d.
+```
 
 ### Category correspondence
 
 For each category, the package reports prevalence, Jaccard overlap, phi correlation, exact McNemar tests and a Haldane-corrected paired odds ratio:
 
-$$
-\operatorname{OR}_{H}
-=
-\frac{n_{\text{xPeerd-only}}+0.5}
-{n_{\text{Human-only}}+0.5}.
-$$
+```math
+\operatorname{OR}_{H}=\frac{n_{\mathrm{xPeerd\text{-}only}}+0.5}{n_{\mathrm{Human\text{-}only}}+0.5}.
+```
 
 ### Recommendation correspondence
 
 Human metadata and auditable xPeerd decision lines are normalized to
 
-$$
-\text{reject}=0,
-\qquad
-\text{revise/reservations}=1,
-\qquad
-\text{approve}=2.
-$$
+```math
+\mathrm{reject}=0,\qquad \mathrm{revise/reservations}=1,\qquad \mathrm{approve}=2.
+```
 
 The secondary recommendation analysis reports source-level consensus means, Spearman association, Lin concordance, quadratic weighted kappa, exact rounded agreement and ordinal MAE. Reviewer identities are not treated as corresponding across sources.
 
