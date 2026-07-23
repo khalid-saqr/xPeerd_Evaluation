@@ -1,0 +1,74 @@
+        quality_checks.append({'check':name,'passed':bool(condition),'detail':str(detail)})
+
+    check('total_records_pinned', len(records)==1108, len(records))
+    check('strict_cohort_pinned', len(included_records)==271, len(included_records))
+    check('mutually_exclusive_reconciliation', exclusion_summary['n'].sum()==len(records), exclusion_summary['n'].sum())
+    check('four_reports_per_manuscript', len(reports_df)==4*len(included_records), len(reports_df))
+    check('two_reports_per_source_per_manuscript', not reports_df.groupby(['benchmark_id','source']).size().ne(2).any())
+    check('source_spelling_locked', set(reports_df.source.unique())=={'Human','xPeerd'}, sorted(reports_df.source.unique()))
+    check('all_included_report_text_nonempty', reports_df.report_text.map(nonempty_text).all())
+    report_unit_coverage = units_df['report_id'].nunique() / len(reports_df)
+    xPeerd_recommendation_coverage = recommendations_df.loc[recommendations_df.source=='xPeerd','recommendation_label'].notna().mean()
+    check('concern_units_nonempty', len(units_df)>0, len(units_df))
+    check('concern_unit_report_coverage_ge_90pct', report_unit_coverage >= 0.90, f'{report_unit_coverage:.4f}')
+    check('profile_has_271x2_rows', len(source_profile)==542, len(source_profile))
+    check('metric_bounds', all(source_profile[c].between(0,1).all() for c in ['T_targeting','R_reasoning','A_attested_alignment','C_coverage','E_executability','R_relevance','redundancy_proxy']))
+    check('no_accuracy_claim_metric', 'scientific_accuracy' not in source_profile.columns)
+    check('sensitivity_thresholds_complete', sensitivity_df.groupby(['threshold','source']).size().eq(271).all())
+    check('recommendation_audit_complete', len(recommendations_df)==len(reports_df), len(recommendations_df))
+    check('paired_difference_rows_complete', len(paired_difference_tests)==len(METRICS), len(paired_difference_tests))
+    check('cross_source_correlation_rows_complete', len(cross_source_correlations)==len(METRICS), len(cross_source_correlations))
+    check('category_test_rows_complete', len(category_paired_tests)==len(CATEGORY_ORDER), len(category_paired_tests))
+    check('probabilities_bounded', all(paired_difference_tests[c].dropna().between(0,1).all() for c in ['paired_wilcoxon_p','sign_flip_permutation_p','wilcoxon_bh_q','sign_flip_bh_q']) and all(cross_source_correlations[c].dropna().between(0,1).all() for c in ['pearson_p','spearman_p','kendall_p','spearman_permutation_p']))
+    check('correlations_bounded', all(cross_source_correlations[c].dropna().between(-1,1).all() for c in ['pearson_r','spearman_rho','kendall_tau_b','partial_spearman_controlling_source_length','lin_concordance_ccc']) and cross_source_correlations['distance_correlation'].dropna().between(0,1).all())
+    check('bootstrap_intervals_ordered', (paired_difference_tests.bootstrap_95ci_low <= paired_difference_tests.bootstrap_95ci_high).all() and (cross_source_correlations.spearman_bootstrap_95ci_low <= cross_source_correlations.spearman_bootstrap_95ci_high).all())
+    check('category_counts_reconcile', ((category_paired_tests[['both_present','human_only','xPeerd_only','neither']].sum(axis=1))==271).all())
+    check('recommendation_consensus_nonempty', int(recommendation_tests.loc[0,'n_manuscripts_with_both_consensus'])>0, int(recommendation_tests.loc[0,'n_manuscripts_with_both_consensus']))
+
+    quality_df = pd.DataFrame(quality_checks)
+    quality_df.to_csv(DIRS['tables'] / 'quality_checks.csv', index=False)
+    if not quality_df['passed'].all():
+        raise RuntimeError('Quality gates failed:\n' + quality_df.loc[~quality_df.passed].to_string(index=False))
+
+    manifest_files = []
+    for path in sorted(TRACE_ROOT.rglob('*')):
+        if path.is_file():
+            manifest_files.append({'relative_path':str(path.relative_to(TRACE_ROOT)), 'bytes':path.stat().st_size, 'sha256':sha256_file(path)})
+    pd.DataFrame(manifest_files).to_csv(TRACE_ROOT / 'output_manifest.csv', index=False)
+
+    limitations = [
+        'Attested alignment is a TF–IDF/token-overlap proxy and is not scientific accuracy.',
+        'Correlation measures association; Lin concordance, error metrics, and Bland–Altman diagnostics are separately reported because association is not agreement.',
+        'Permutation p-values and bootstrap intervals quantify sampling uncertainty under stated resampling schemes; they do not validate review claims.',
+        'Concern matching is threshold-sensitive lexical correspondence, not proof of equivalence, validity, or novelty.',
+        'Coverage is breadth across a fixed rule-based taxonomy, not complete flaw detection.',
+        'Executability and reasoning are explicit-language measures and may miss implicit content.',
+        'Recommendation normalization for xPeerd is rule-based and separately audited with confidence and evidence.',
+        'The strict complete-case cohort is 271/1108 records; all 837 exclusions are reported before analysis.',
+    ]
+    completion = {
+        'status':'PASS','input_sha256':CONFIG['input_sha256'],'all_records':len(records),
+        'included_manuscripts':len(included_records),'excluded_records':len(records)-len(included_records),
+        'report_rows':len(reports_df),'concern_units':len(units_df),
+        'reports_with_concern_units':int(units_df['report_id'].nunique()),
+        'concern_unit_report_coverage':float(report_unit_coverage),
+        'xPeerd_recommendation_classification_coverage':float(xPeerd_recommendation_coverage),
+        'deterministic_association_metrics':['Pearson r','Spearman rho','Kendall tau-b','distance correlation','partial Spearman'],
+        'agreement_metrics':['Lin concordance coefficient','MAE','RMSE','Bland–Altman bias and limits','Jaccard','phi','quadratic weighted kappa'],
+        'probabilistic_tests':['bootstrap confidence intervals','Spearman permutation tests','paired sign-flip tests','paired Wilcoxon tests','exact McNemar tests','Benjamini–Hochberg FDR'],
+        'quality_checks_passed':int(quality_df.passed.sum()),'quality_checks_total':len(quality_df),
+        'limitations':limitations,
+    }
+    (TRACE_ROOT / 'TRACE_R_COMPLETION_REPORT.json').write_text(json.dumps(completion,indent=2),encoding='utf-8')
+    print(json.dumps(completion, indent=2))
+
+    # FIGURE CELL 1 — Distribution, pairing, and scale diagnostics
+    HUMAN_COLOR, XPEERD_COLOR = '#3B6FB6', '#D45A4C'
+    SOURCE_COLORS = {'Human':HUMAN_COLOR, 'xPeerd':XPEERD_COLOR}
+    SOURCE_ORDER = ['Human','xPeerd']
+    LEGEND_HANDLES = [Patch(facecolor=HUMAN_COLOR,alpha=.78,label='Human'), Patch(facecolor=XPEERD_COLOR,alpha=.78,label='xPeerd')]
+
+    def nature_theme():
+        plt.rcParams.update({'font.family':'DejaVu Sans','font.size':8,'axes.titlesize':9,'axes.labelsize':8,
+                             'xtick.labelsize':7,'ytick.labelsize':7,'legend.fontsize':7,'axes.linewidth':0.7,
+                             'figure.dpi':130,'savefig.bbox':'tight'})

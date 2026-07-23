@@ -1,0 +1,94 @@
+        raise RuntimeError(f'Expected {2*len(included_records)} source-level rows; found {len(source_profile)}')
+    for col in ['T_targeting','R_reasoning','A_attested_alignment','C_coverage','E_executability','R_relevance','redundancy_proxy']:
+        if not source_profile[col].between(0,1).all():
+            raise RuntimeError(f'{col} outside [0,1].')
+    source_profile.to_csv(DIRS['tables'] / 'trace_r_source_profile.csv', index=False)
+    report_features.to_csv(DIRS['tables'] / 'trace_r_report_profile.csv', index=False)
+    category_prevalence.to_csv(DIRS['tables'] / 'category_prevalence.csv', index=False)
+    category_presence_df.to_csv(DIRS['data'] / 'category_presence_by_manuscript.csv.gz', index=False, compression='gzip')
+    print(source_profile.groupby('source').agg({'report_word_count':'median','concern_count':'median','T_targeting':'mean','R_reasoning':'mean','A_attested_alignment':'mean','C_coverage':'mean','E_executability':'mean','R_relevance':'mean','redundancy_proxy':'mean'}).round(3))
+    # CELL 8 — Recommendation normalization as a secondary, auditable analysis
+    LABEL_ORDER = {'reject':0, 'revise_or_reservations':1, 'approve':2}
+
+    def normalize_human_recommendation(value):
+        v = str(value or '').strip().lower()
+        mapping = {'reject':'reject','approve-with-reservations':'revise_or_reservations','approve':'approve'}
+        return mapping.get(v)
+
+    DECISION_LINE_RE = re.compile(r'\b(recommend(?:ation)?|decision|verdict|overall judgment|overall assessment|publishable|publication)\b', re.I)
+    REJECT_RE = re.compile(r'\b(reject|not approve|not suitable for publication|decline)\b', re.I)
+    REVISE_RE = re.compile(r'\b(revise|revision|reservations|resubmit|major changes|minor changes|conditional(?:ly)? accept)\b', re.I)
+    APPROVE_RE = re.compile(r'\b(approve|accept(?:ed)?|publication ready|publishable as is)\b', re.I)
+
+    def infer_xPeerd_recommendation(text):
+        lines = [x.strip(' -*•\t') for x in str(text or '').splitlines() if x.strip()]
+        candidates = []
+        for pos, line in enumerate(lines):
+            labels = []
+            if REJECT_RE.search(line): labels.append('reject')
+            if REVISE_RE.search(line): labels.append('revise_or_reservations')
+            if APPROVE_RE.search(line) and not re.search(r'not\s+(?:approve|accept)', line, re.I): labels.append('approve')
+            if labels:
+                priority = 2 if DECISION_LINE_RE.search(line) else 1
+                recency = pos / max(1, len(lines)-1)
+                # More severe label wins only within the same line; later decision-labelled lines dominate.
+                label = min(labels, key=lambda z: LABEL_ORDER[z])
+                candidates.append((priority, recency, label, line[:500]))
+        if not candidates:
+            return None, 'none', ''
+        priority, recency, label, evidence = max(candidates, key=lambda x:(x[0],x[1]))
+        confidence = 'high' if priority == 2 else 'medium'
+        return label, confidence, evidence
+
+    recommendation_rows = []
+    for r in reports_df.itertuples(index=False):
+        if r.source == 'Human':
+            label = normalize_human_recommendation(r.human_recommendation)
+            confidence, evidence = ('metadata', str(r.human_recommendation))
+        else:
+            label, confidence, evidence = infer_xPeerd_recommendation(r.report_text)
+        recommendation_rows.append({'benchmark_id':r.benchmark_id,'report_id':r.report_id,'source':r.source,
+                                    'reviewer_index':r.reviewer_index,'recommendation_label':label,
+                                    'recommendation_ordinal':LABEL_ORDER.get(label, np.nan),
+                                    'normalization_confidence':confidence,'evidence':evidence})
+    recommendations_df = pd.DataFrame(recommendation_rows)
+    recommendations_df.to_csv(DIRS['tables'] / 'recommendation_normalization_audit.csv', index=False)
+
+    # Pair each xPeerd reviewer with both humans and report mean agreement; do not imply reviewer identity correspondence.
+    rec_agreement_rows = []
+    for bid, sub in recommendations_df.groupby('benchmark_id'):
+        h = sub[(sub.source=='Human') & sub.recommendation_ordinal.notna()]
+        x = sub[(sub.source=='xPeerd') & sub.recommendation_ordinal.notna()]
+        pair_equal = [int(a==b) for a in h.recommendation_ordinal for b in x.recommendation_ordinal]
+        pair_distance = [abs(a-b) for a in h.recommendation_ordinal for b in x.recommendation_ordinal]
+        rec_agreement_rows.append({'benchmark_id':bid,'human_labels':len(h),'xPeerd_labels':len(x),
+                                   'cross_pair_exact_agreement':float(np.mean(pair_equal)) if pair_equal else np.nan,
+                                   'cross_pair_mean_ordinal_distance':float(np.mean(pair_distance)) if pair_distance else np.nan})
+    recommendation_agreement_df = pd.DataFrame(rec_agreement_rows)
+    recommendation_agreement_df.to_csv(DIRS['tables'] / 'recommendation_agreement.csv', index=False)
+
+    within_rec_rows = []
+    for (bid, source), sub in recommendations_df.groupby(['benchmark_id','source']):
+        vals = sub.sort_values('reviewer_index').recommendation_ordinal.dropna().to_numpy(float)
+        within_rec_rows.append({
+            'benchmark_id': bid, 'source': source, 'classified_reviewers': len(vals),
+            'within_source_ordinal_distance': float(abs(vals[0]-vals[1])) if len(vals)==2 else np.nan,
+        })
+    within_recommendation_df = pd.DataFrame(within_rec_rows)
+    within_recommendation_df.to_csv(DIRS['tables'] / 'within_source_recommendation_disagreement.csv', index=False)
+    print(recommendations_df.groupby(['source','normalization_confidence']).size())
+    print('\nRecommendation coverage by source:')
+    print(recommendations_df.groupby('source')['recommendation_label'].apply(lambda s:s.notna().mean()).round(3))
+
+    # Manuscript-level consensus is a descriptive aggregation; reviewer identities are not paired across sources.
+    recommendation_consensus = (recommendations_df.groupby(['benchmark_id','source'])
+        .agg(classified_reviewers=('recommendation_ordinal', lambda s: int(s.notna().sum())),
+             consensus_mean_ordinal=('recommendation_ordinal','mean'),
+             consensus_median_ordinal=('recommendation_ordinal','median'),
+             reviewer_ordinal_range=('recommendation_ordinal', lambda s: float(s.max()-s.min()) if s.notna().sum() >= 2 else np.nan))
+        .reset_index())
+    recommendation_consensus['consensus_rounded'] = recommendation_consensus['consensus_mean_ordinal'].round().clip(0,2)
+    recommendation_consensus.to_csv(DIRS['tables'] / 'recommendation_consensus_by_manuscript.csv', index=False)
+
+    # CELL 9 — Deterministic and probabilistic paired association/agreement stress tests
+    METRICS = ['report_word_count','concern_count','concerns_per_1000_words','T_targeting','R_reasoning',

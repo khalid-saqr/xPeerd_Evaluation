@@ -1,0 +1,2 @@
+# Colab already provides the numerical stack. Install only if missing.
+requests>=2.31,<3

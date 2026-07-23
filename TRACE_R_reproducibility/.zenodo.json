@@ -1,0 +1,18 @@
+{
+  "title": "TRACE-R reproducibility package",
+  "upload_type": "software",
+  "description": "Reproduces the locked TRACE-R evaluation of xPeerd versus human peer review.",
+  "creators": [
+    {
+      "name": "Saqr, Khalid"
+    }
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.5281/zenodo.21479700",
+      "relation": "isSupplementTo",
+      "scheme": "doi"
+    }
+  ],
+  "version": "1.0.0"
+}

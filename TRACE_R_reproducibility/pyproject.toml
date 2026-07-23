@@ -1,0 +1,25 @@
+[build-system]
+requires=["setuptools>=69","wheel"]
+build-backend="setuptools.build_meta"
+
+[project]
+name="trace-r-reproducibility"
+version="1.0.0"
+description="Reproducibility package for TRACE-R evaluation of xPeerd versus human peer review"
+requires-python=">=3.11"
+dependencies=["numpy==2.3.5","pandas==2.2.3","scipy==1.17.0","scikit-learn==1.8.0","matplotlib==3.10.8","requests==2.32.5"]
+
+[project.scripts]
+trace-r="trace_r.cli:main"
+
+[tool.setuptools]
+package-dir={""="src"}
+
+[tool.setuptools.packages.find]
+where=["src"]
+
+[tool.setuptools.package-data]
+trace_r=["pipeline_parts/*.pyfrag"]
+
+[tool.pytest.ini_options]
+markers=["slow: full end-to-end reproduction"]

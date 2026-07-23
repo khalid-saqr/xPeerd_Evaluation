@@ -1,0 +1,116 @@
+        return [s.strip(' -•\t') for s in re.split(r'(?<=[.!?])\s+(?=[A-Z0-9“"(])', line) if s.strip()]
+
+    def concern_category(text):
+        for name, pattern in CATEGORY_RULES:
+            if pattern.search(text): return name
+        return 'other_scientific'
+
+    def extract_units(report_row):
+        units, section = [], 'other'
+        for line_no, raw_line in enumerate(report_row.report_text.splitlines(), start=1):
+            raw_line = raw_line.strip()
+            if not raw_line: continue
+            stripped = BULLET_RE.sub('', raw_line).strip()
+            nwords = len(words(stripped))
+            looks_heading = nwords <= 10 and (raw_line.endswith(':') or HEADING_RE.match(stripped))
+            if looks_heading:
+                section = classify_section(stripped)
+                continue
+            for sentence in split_sentences(stripped):
+                wc = len(words(sentence))
+                if wc < MIN_WORDS: continue
+                action = bool(ACTION_RE.search(sentence))
+                rationale = bool(RATIONALE_RE.search(sentence))
+                concern = bool(CONCERN_RE.search(sentence)) or sentence.endswith('?')
+                praise_only = bool(PRAISE_RE.search(sentence)) and not (action or concern)
+                contextual_concern = section in {'concerns', 'recommendation'} and not praise_only
+                if not (concern or action or contextual_concern):
+                    continue
+                cat = concern_category(sentence)
+                units.append({
+                    'benchmark_id': report_row.benchmark_id,
+                    'report_id': report_row.report_id,
+                    'source': report_row.source,
+                    'reviewer_index': report_row.reviewer_index,
+                    'line_no': line_no,
+                    'section_context': section,
+                    'unit_text': sentence,
+                    'word_count': wc,
+                    'target_explicit': int(bool(TARGET_RE.search(sentence))),
+                    'reasoning_explicit': int(rationale),
+                    'executable': int(action),
+                    'category': cat,
+                    'scientific_relevance': int(cat != 'presentation_clarity'),
+                    'question_form': int(sentence.endswith('?')),
+                })
+        return units
+
+    unit_rows = []
+    for row in reports_df.itertuples(index=False):
+        unit_rows.extend(extract_units(row))
+    units_df = pd.DataFrame(unit_rows)
+    if units_df.empty:
+        raise RuntimeError('Concern extraction produced zero units.')
+    if units_df['report_id'].nunique() < int(0.90 * len(reports_df)):
+        raise RuntimeError('Concern extraction failed to produce units for at least 90% of reports.')
+
+    report_direct = (reports_df.assign(report_word_count=reports_df['report_text'].map(lambda x: len(words(x))))
+                     [['benchmark_id','report_id','source','reviewer_index','report_word_count','boilerplate_removed_chars']])
+    concern_counts = units_df.groupby('report_id').size().rename('concern_count')
+    report_direct = report_direct.merge(concern_counts, on='report_id', how='left').fillna({'concern_count':0})
+    report_direct['concerns_per_1000_words'] = 1000 * report_direct['concern_count'] / report_direct['report_word_count'].clip(lower=1)
+
+    units_df.to_csv(DIRS['data'] / 'concern_units.csv.gz', index=False, compression='gzip')
+    report_direct.to_csv(DIRS['tables'] / 'report_direct_metrics.csv', index=False)
+    print({'concern_units': len(units_df), 'reports_with_units': units_df['report_id'].nunique(),
+           'median_units_human': float(units_df.groupby('report_id').size().reindex(reports_df.loc[reports_df.source=='Human','report_id']).fillna(0).median()),
+           'median_units_xPeerd': float(units_df.groupby('report_id').size().reindex(reports_df.loc[reports_df.source=='xPeerd','report_id']).fillna(0).median())})
+    # CELL 5 — Manuscript chunking and attested alignment proxy (TF–IDF + token overlap)
+    STOPWORDS = set('a an and are as at be been being by for from had has have if in into is it its may might of on or our should than that the their there these they this those to was were which who will with would you your'.split())
+
+    def content_tokens(text):
+        return {w.lower() for w in words(text) if len(w) > 2 and w.lower() not in STOPWORDS}
+
+    def chunk_words(text, size, overlap):
+        toks = text.split()
+        if not toks: return []
+        step = max(1, size - overlap)
+        return [' '.join(toks[i:i+size]) for i in range(0, len(toks), step) if toks[i:i+size]]
+
+    manuscripts = reports_df[['benchmark_id','manuscript_text']].drop_duplicates('benchmark_id').set_index('benchmark_id')['manuscript_text'].to_dict()
+    grounding_rows = []
+    for bid, sub in units_df.groupby('benchmark_id', sort=False):
+        concerns = sub['unit_text'].tolist()
+        chunks = chunk_words(manuscripts[bid], CONFIG['manuscript_chunk_words'], CONFIG['manuscript_chunk_overlap_words'])
+        if not chunks:
+            raise RuntimeError(f'No manuscript chunks for {bid}')
+        corpus = chunks + concerns
+        vectorizer = TfidfVectorizer(lowercase=True, stop_words='english', ngram_range=(1,2), sublinear_tf=True, max_features=30000)
+        matrix = vectorizer.fit_transform(corpus)
+        chunk_m = matrix[:len(chunks)]
+        concern_m = matrix[len(chunks):]
+        sim = linear_kernel(concern_m, chunk_m)
+        best_idx = np.asarray(sim.argmax(axis=1)).ravel()
+        best_score = np.asarray(sim.max(axis=1)).ravel()
+        for local_i, (_, u) in enumerate(sub.iterrows()):
+            c_tokens = content_tokens(u['unit_text'])
+            p_tokens = content_tokens(chunks[int(best_idx[local_i])])
+            overlap = len(c_tokens & p_tokens) / max(1, len(c_tokens))
+            grounding_rows.append({
+                'unit_index': int(u.name),
+                'benchmark_id': bid,
+                'source': u['source'],
+                'best_chunk_index': int(best_idx[local_i]),
+                'tfidf_grounding': float(best_score[local_i]),
+                'token_grounding': float(overlap),
+                'attested_alignment': float(0.75*best_score[local_i] + 0.25*overlap),
+                'best_chunk_excerpt': chunks[int(best_idx[local_i])][:500],
+            })
+
+    grounding_df = pd.DataFrame(grounding_rows).set_index('unit_index')
+    units_df = units_df.join(grounding_df[['tfidf_grounding','token_grounding','attested_alignment','best_chunk_excerpt']])
+    for col in ['tfidf_grounding','token_grounding','attested_alignment']:
+        if not units_df[col].between(0,1).all():
+            raise RuntimeError(f'{col} contains values outside [0,1].')
+    units_df.to_csv(DIRS['data'] / 'concern_units_with_grounding.csv.gz', index=False, compression='gzip')
+    print(units_df.groupby('source')[['tfidf_grounding','token_grounding','attested_alignment']].agg(['mean','median']).round(3))

@@ -1,0 +1,81 @@
+    ax_d.set_yticks(y,[short_names[m] for m in plot.metric]); ax_d.set_xlabel('Spearman (dark) versus CCC (light)'); ax_d.set_xlim(-.2,.35); clean_ax(ax_d); panel_label(ax_d,'d')
+    fig.suptitle('TRACE-R profile: magnitude, association, and agreement',fontsize=10)
+    assert_one_source_legend(fig,ax_a); save_figure(fig,'Figure_2_TRACE_R_association_agreement'); plt.close(fig)
+
+    # FIGURE CELL 3 — Concern correspondence and Bland–Altman diagnostics
+    nature_theme()
+    fig,axs=plt.subplots(2,2,figsize=(7.2,5.5),constrained_layout=True)
+    # a: ECDF of unique matched fractions
+    for source,col in [('Human','human_recovery_proxy'),('xPeerd','xPeerd_alignment_proxy')]:
+        ecdf(axs[0,0],manuscript_matches_df[col].fillna(0),SOURCE_COLORS[source])
+    axs[0,0].set(xlabel='Unique matched concern fraction',ylabel='Cumulative proportion',xlim=(0,1)); clean_ax(axs[0,0]); source_legend_once(axs[0,0]); panel_label(axs[0,0],'a')
+
+    def bland_altman(ax,metric,ylabel):
+        h=wide[(metric,'Human')].to_numpy(float); x=wide[(metric,'xPeerd')].to_numpy(float)
+        mean=(h+x)/2; diff=x-h; bias=diff.mean(); sd=diff.std(ddof=1)
+        ax.scatter(mean,diff,s=10,alpha=.45,color='0.25',edgecolor='none')
+        ax.axhline(bias,color=XPEERD_COLOR,lw=1.2); ax.axhline(bias+1.96*sd,color='0.45',ls='--',lw=.9); ax.axhline(bias-1.96*sd,color='0.45',ls='--',lw=.9)
+        ax.set(xlabel='Pair mean',ylabel=ylabel); clean_ax(ax)
+    # b/c: Bland–Altman
+    bland_altman(axs[0,1],'report_word_count','xPeerd − Human words'); panel_label(axs[0,1],'b')
+    bland_altman(axs[1,0],'C_coverage','xPeerd − Human coverage'); panel_label(axs[1,0],'c')
+    # d: probabilistic association evidence from permutation tests
+    plot=cross_source_correlations[cross_source_correlations.metric.isin(TRACE_METRICS)].copy().iloc[::-1]
+    y=np.arange(len(plot)); ax=axs[1,1]
+    score=-np.log10(plot.spearman_permutation_p.clip(lower=1/(CONFIG['permutation_replicates']+1)))
+    ax.hlines(y,0,score,color='0.72',lw=1.4); ax.scatter(score,y,color='0.30',s=25)
+    ax.axvline(-np.log10(.05),color='0.45',ls='--',lw=.8)
+    ax.set_yticks(y,[m.split('_',1)[-1].replace('_',' ') for m in plot.metric]); ax.set_xlabel('−log10 permutation p'); clean_ax(ax); panel_label(ax,'d')
+    fig.suptitle('Concern correspondence: association is not agreement',fontsize=10)
+    assert_one_source_legend(fig,axs[0,0]); save_figure(fig,'Figure_3_correspondence_and_bias'); plt.close(fig)
+
+    # FIGURE CELL 4 — Category prevalence, overlap, and exact paired tests
+    nature_theme()
+    fig,axs=plt.subplots(2,2,figsize=(7.2,5.8),constrained_layout=False)
+    fig.subplots_adjust(left=.19,right=.98,bottom=.10,top=.91,wspace=.50,hspace=.40)
+    ct=category_paired_tests.copy(); labels=[c.replace('_','\n') for c in ct.category]
+    # a: grouped horizontal prevalence bars
+    ycat=np.arange(len(ct)); height=.34
+    axs[0,0].barh(ycat-height/2,ct.human_prevalence,height,color=HUMAN_COLOR,alpha=.8)
+    axs[0,0].barh(ycat+height/2,ct.xPeerd_prevalence,height,color=XPEERD_COLOR,alpha=.8)
+    axs[0,0].set_yticks(ycat,[c.replace('_',' ') for c in ct.category]); axs[0,0].set_xlabel('Manuscript prevalence'); axs[0,0].set_xlim(0,1); clean_ax(axs[0,0]); source_legend_once(axs[0,0],loc='upper center',bbox_to_anchor=(.55,1.16)); panel_label(axs[0,0],'a')
+    # b: 100% stacked overlap composition
+    parts=['both_present','human_only','xPeerd_only','neither']; part_colors=['0.38',HUMAN_COLOR,XPEERD_COLOR,'0.88']
+    left=np.zeros(len(ct))
+    for part,color in zip(parts,part_colors):
+        vals=ct[part].to_numpy()/271
+        axs[0,1].barh(np.arange(len(ct)),vals,left=left,color=color,height=.72)
+        left+=vals
+    axs[0,1].set_yticks(np.arange(len(ct)),[c.replace('_',' ') for c in ct.category]); axs[0,1].set_xlim(0,1); axs[0,1].set_xlabel('Composition proportion'); axs[0,1].text(.5,1.03,'both | Human-only | xPeerd-only | neither',transform=axs[0,1].transAxes,ha='center',fontsize=6); clean_ax(axs[0,1]); panel_label(axs[0,1],'b')
+    # c: overlap association map
+    size=35+180*(ct.human_prevalence+ct.xPeerd_prevalence)/2
+    axs[1,0].scatter(ct.jaccard_overlap,ct.phi_correlation,s=size,color='0.35',alpha=.72,edgecolor='white',linewidth=.5)
+    abbr={'statistics':'STAT','study_design':'DES','methods_reproducibility':'METH','data_results':'DATA',
+          'interpretation_claims':'CLAIM','literature_context':'LIT','ethics_reporting':'ETH','presentation_clarity':'CLAR','other_scientific':'OTHER'}
+    offsets={'STAT':(4,3),'DES':(-18,4),'METH':(4,-8),'DATA':(4,4),'CLAIM':(-20,-10),'LIT':(-14,5),'ETH':(4,4),'CLAR':(4,-7),'OTHER':(-26,-8)}
+    for r in ct.itertuples():
+        tag=abbr[r.category]; axs[1,0].annotate(tag,(r.jaccard_overlap,r.phi_correlation),xytext=offsets[tag],textcoords='offset points',fontsize=5.5)
+    axs[1,0].axhline(0,color='0.55',ls='--',lw=.7); axs[1,0].set(xlabel='Jaccard overlap',ylabel='Phi correlation',xlim=(0,1),ylim=(-.08,.38)); clean_ax(axs[1,0]); panel_label(axs[1,0],'c')
+    # d: paired prevalence difference forest with FDR marks
+    y=np.arange(len(ct)); axs[1,1].hlines(y,ct.bootstrap_95ci_low,ct.bootstrap_95ci_high,color='0.35',lw=1.2)
+    axs[1,1].scatter(ct.xPeerd_minus_human_prevalence,y,c=[XPEERD_COLOR if v>=0 else HUMAN_COLOR for v in ct.xPeerd_minus_human_prevalence],s=27)
+    axs[1,1].axvline(0,color='0.35',ls='--',lw=.8)
+    for i,q in enumerate(ct.mcnemar_bh_q):
+        if q<.05: axs[1,1].text(max(ct.bootstrap_95ci_high.iloc[i],ct.xPeerd_minus_human_prevalence.iloc[i])+.01,i,'*',va='center',fontsize=9)
+    axs[1,1].set_yticks(y,[c.replace('_',' ') for c in ct.category]); axs[1,1].set_xlabel('xPeerd − Human prevalence (95% CI)'); clean_ax(axs[1,1]); panel_label(axs[1,1],'d')
+    fig.suptitle('Prespecified category correspondence and paired asymmetry',fontsize=10)
+    assert_one_source_legend(fig,axs[0,0]); save_figure(fig,'Figure_4_category_correspondence'); plt.close(fig)
+
+    # FIGURE CELL 5 — Recommendation audit and matching robustness
+    nature_theme()
+    fig,axs=plt.subplots(2,2,figsize=(7.2,5.6),constrained_layout=True)
+    # a: recommendation classification coverage with the single source legend
+    coverage=recommendations_df.assign(classified=recommendations_df.recommendation_label.notna()).groupby('source').classified.mean()
+    axs[0,0].bar([0,1],[coverage.get('Human',0),coverage.get('xPeerd',0)],color=[HUMAN_COLOR,XPEERD_COLOR],alpha=.82,width=.62)
+    axs[0,0].set_xticks([0,1],SOURCE_ORDER); axs[0,0].set_ylim(0,1); axs[0,0].set_ylabel('Classification coverage'); clean_ax(axs[0,0]); source_legend_once(axs[0,0]); panel_label(axs[0,0],'a')
+    # b: 100% stacked recommendation distributions; labels printed directly, no extra legend
+    rec_labels=['reject','revise_or_reservations','approve']; rec_colors=['0.25','0.58','0.83']
+    left=np.zeros(2)
+    for lab,color in zip(rec_labels,rec_colors):
+        vals=[]
+        for source in SOURCE_ORDER:

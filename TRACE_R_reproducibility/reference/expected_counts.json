@@ -1,0 +1,12 @@
+{
+  "all_records": 1108,
+  "exactly_two_human": 802,
+  "included_manuscripts": 271,
+  "excluded_records": 837,
+  "report_rows": 1084,
+  "concern_units": 15563,
+  "reports_with_concern_units": 1023,
+  "quality_checks_total": 22,
+  "figure_files": 10,
+  "source_sha256": "0ab7cb88d2b2db687b586ad303e017a9db0a8104e10f1b8e18c30b8f6a75129c"
+}

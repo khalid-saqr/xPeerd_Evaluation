@@ -1,0 +1,116 @@
+    # CELL 6 — Unique cross-source concern matching and within-source redundancy proxies
+    THRESHOLDS = CONFIG['sensitivity_thresholds']
+    DEFAULT_THRESHOLD = CONFIG['default_match_threshold']
+    match_rows, manuscript_match_rows, sensitivity_rows, redundancy_rows = [], [], [], []
+
+    def cross_similarity(texts_a, texts_b):
+        if not texts_a or not texts_b:
+            return np.zeros((len(texts_a), len(texts_b)))
+        vec = TfidfVectorizer(lowercase=True, stop_words='english', ngram_range=(1,2), sublinear_tf=True, max_features=30000)
+        m = vec.fit_transform(list(texts_a) + list(texts_b))
+        return linear_kernel(m[:len(texts_a)], m[len(texts_a):])
+
+    for bid, sub in units_df.groupby('benchmark_id', sort=False):
+        h = sub[sub.source=='Human']
+        x = sub[sub.source=='xPeerd']
+        sim = cross_similarity(h.unit_text.tolist(), x.unit_text.tolist())
+        if sim.size:
+            row_ind, col_ind = linear_sum_assignment(-sim)
+            assigned = [(int(i), int(j), float(sim[i,j])) for i,j in zip(row_ind,col_ind)]
+        else:
+            assigned = []
+        for i,j,s in assigned:
+            match_rows.append({'benchmark_id':bid, 'human_unit_index':int(h.index[i]), 'xPeerd_unit_index':int(x.index[j]), 'similarity':s})
+        for threshold in THRESHOLDS:
+            accepted = [(i,j,s) for i,j,s in assigned if s >= threshold]
+            sensitivity_rows += [
+                {'benchmark_id':bid,'threshold':threshold,'source':'Human','matched_fraction':len(accepted)/max(1,len(h))},
+                {'benchmark_id':bid,'threshold':threshold,'source':'xPeerd','matched_fraction':len(accepted)/max(1,len(x))},
+            ]
+        accepted = [(i,j,s) for i,j,s in assigned if s >= DEFAULT_THRESHOLD]
+        manuscript_match_rows.append({
+            'benchmark_id':bid,
+            'human_units':len(h), 'xPeerd_units':len(x), 'accepted_unique_matches':len(accepted),
+            'human_recovery_proxy':len(accepted)/max(1,len(h)),
+            'xPeerd_alignment_proxy':len(accepted)/max(1,len(x)),
+            'mean_accepted_similarity':float(np.mean([s for _,_,s in accepted])) if accepted else np.nan,
+        })
+
+        # Reviewer-to-reviewer redundancy within each source, using the same unique assignment rule.
+        for source in ['Human','xPeerd']:
+            a = sub[(sub.source==source)&(sub.reviewer_index==1)]
+            b = sub[(sub.source==source)&(sub.reviewer_index==2)]
+            rsim = cross_similarity(a.unit_text.tolist(), b.unit_text.tolist())
+            if rsim.size:
+                ri, ci = linear_sum_assignment(-rsim)
+                vals = np.array([rsim[i,j] for i,j in zip(ri,ci)], dtype=float)
+                duplicate_pairs = int((vals >= DEFAULT_THRESHOLD).sum())
+            else:
+                vals = np.array([]); duplicate_pairs = 0
+            redundancy_rows.append({
+                'benchmark_id':bid, 'source':source,
+                'reviewer1_units':len(a), 'reviewer2_units':len(b),
+                'duplicate_pairs':duplicate_pairs,
+                'redundancy_proxy':duplicate_pairs/max(1,min(len(a),len(b))),
+                'mean_assigned_similarity':float(vals.mean()) if len(vals) else np.nan,
+            })
+
+    matches_df = pd.DataFrame(match_rows)
+    manuscript_matches_df = pd.DataFrame(manuscript_match_rows)
+    sensitivity_df = pd.DataFrame(sensitivity_rows)
+    redundancy_df = pd.DataFrame(redundancy_rows)
+    for df, name in [(matches_df,'unique_concern_matches.csv.gz'),(manuscript_matches_df,'manuscript_match_metrics.csv'),
+                     (sensitivity_df,'matching_threshold_sensitivity.csv'),(redundancy_df,'within_source_redundancy.csv')]:
+        df.to_csv((DIRS['data'] if name.endswith('.gz') else DIRS['tables']) / name, index=False, compression='gzip' if name.endswith('.gz') else None)
+    print(manuscript_matches_df[['human_recovery_proxy','xPeerd_alignment_proxy','mean_accepted_similarity']].describe().round(3))
+    # CELL 7 — Aggregate the locked, stress-tested TRACE-R observable profile
+    # Aggregate two reports per source at manuscript level. No composite epistemic-value score is created.
+    unit_report_features = (units_df.groupby(['benchmark_id','source','report_id'])
+        .agg(concern_count=('unit_text','size'),
+             targeting_explicit=('target_explicit','mean'),
+             reasoning=('reasoning_explicit','mean'),
+             attested_alignment=('attested_alignment','mean'),
+             executability=('executable','mean'),
+             relevance=('scientific_relevance','mean'),
+             category_breadth=('category','nunique'))
+        .reset_index())
+
+    # Start from the complete four-report table so reports with zero extracted concern units remain explicit zeros.
+    report_features = report_direct[['benchmark_id','report_id','source','reviewer_index','report_word_count','concerns_per_1000_words']].copy()
+    report_features = report_features.merge(
+        unit_report_features,
+        on=['benchmark_id','source','report_id'],
+        how='left',
+        validate='one_to_one',
+    )
+    for c in ['concern_count','targeting_explicit','reasoning','attested_alignment','executability','relevance','category_breadth']:
+        report_features[c] = report_features[c].fillna(0)
+    report_features['coverage'] = report_features['category_breadth'] / len(CATEGORY_ORDER)
+
+    source_profile = (report_features.groupby(['benchmark_id','source'])
+        .agg(report_word_count=('report_word_count','sum'),
+             concern_count=('concern_count','sum'),
+             concerns_per_1000_words=('concerns_per_1000_words','mean'),
+             T_targeting=('targeting_explicit','mean'),
+             R_reasoning=('reasoning','mean'),
+             A_attested_alignment=('attested_alignment','mean'),
+             C_coverage=('coverage','mean'),
+             E_executability=('executability','mean'),
+             R_relevance=('relevance','mean'))
+        .reset_index())
+    source_profile = source_profile.merge(redundancy_df[['benchmark_id','source','redundancy_proxy']], on=['benchmark_id','source'], how='left', validate='one_to_one')
+
+    # Category prevalence is a direct frequency, not an accuracy judgment.
+    # Retain the complete manuscript × source × category binary grid for paired tests.
+    presence = (units_df.assign(present=1)
+        .groupby(['benchmark_id','source','category'])['present'].max())
+    full_index = pd.MultiIndex.from_product(
+        [sorted(source_profile['benchmark_id'].unique()), ['Human','xPeerd'], CATEGORY_ORDER],
+        names=['benchmark_id','source','category'],
+    )
+    category_presence_df = presence.reindex(full_index, fill_value=0).rename('present').reset_index()
+    category_prevalence = (category_presence_df
+        .groupby(['source','category'], as_index=False)['present'].mean()
+        .rename(columns={'present':'manuscript_prevalence'}))
+
+    if len(source_profile) != 2 * len(included_records):

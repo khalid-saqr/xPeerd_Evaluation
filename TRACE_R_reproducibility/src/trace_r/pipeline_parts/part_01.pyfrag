@@ -1,0 +1,101 @@
+    # CELL 3 — Construct four-report paired dataset and clean only declared boilerplate
+    BOILERPLATE_PATTERNS = [
+        re.compile(r'\n?I never store any files beyond your sessions\..*?(?=\n\n|$)', re.I | re.S),
+        re.compile(r'\n?I[’\']?m ready to assist with.*$', re.I | re.S),
+        re.compile(r'\n?If you upload a revised version.*$', re.I | re.S),
+    ]
+
+    def normalize_text(text):
+        text = str(text or '').replace('\r\n', '\n').replace('\r', '\n')
+        text = re.sub(r'[ \t]+', ' ', text)
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
+        return text
+
+    def clean_xPeerd_text(text):
+        original = normalize_text(text)
+        cleaned = original
+        for pattern in BOILERPLATE_PATTERNS:
+            cleaned = pattern.sub('', cleaned)
+        cleaned = normalize_text(cleaned)
+        return cleaned, len(original) - len(cleaned)
+
+    report_rows = []
+    boilerplate_removed_chars = 0
+    for r in included_records:
+        bid = r['benchmark_id']
+        manuscript = r['manuscript'] or {}
+        human_reviews = r['human_reviews']
+        x = r['xpeer_simulation'] or {}
+
+        for idx, h in enumerate(human_reviews, start=1):
+            text = normalize_text(h.get('review_text'))
+            report_rows.append({
+                'benchmark_id': bid, 'document_id': r.get('document_id'),
+                'source': 'Human', 'reviewer_index': idx, 'report_id': f'{bid}|Human|{idx}',
+                'report_text': text, 'human_recommendation': h.get('recommendation'),
+                'manuscript_text': normalize_text(manuscript.get('manuscript_text')),
+                'title': manuscript.get('title'), 'category': manuscript.get('category'),
+                'boilerplate_removed_chars': 0,
+            })
+
+        for idx, field in enumerate(('Reviewer1', 'Reviewer2'), start=1):
+            cleaned, removed = clean_xPeerd_text(x.get(field))
+            boilerplate_removed_chars += removed
+            report_rows.append({
+                'benchmark_id': bid, 'document_id': r.get('document_id'),
+                'source': 'xPeerd', 'reviewer_index': idx, 'report_id': f'{bid}|xPeerd|{idx}',
+                'report_text': cleaned, 'human_recommendation': None,
+                'manuscript_text': normalize_text(manuscript.get('manuscript_text')),
+                'title': manuscript.get('title'), 'category': manuscript.get('category'),
+                'boilerplate_removed_chars': removed,
+            })
+
+    reports_df = pd.DataFrame(report_rows)
+    expected_reports = len(included_records) * 4
+    if len(reports_df) != expected_reports:
+        raise RuntimeError(f'Expected {expected_reports} report rows; found {len(reports_df)}')
+    if reports_df.groupby(['benchmark_id', 'source']).size().ne(2).any():
+        raise RuntimeError('Every included manuscript must have exactly two reports per source.')
+    if (~reports_df['report_text'].map(nonempty_text)).any():
+        raise RuntimeError('Included report table contains an empty report.')
+
+    reports_df.drop(columns=['manuscript_text']).to_csv(DIRS['data'] / 'paired_reports.csv.gz', index=False, compression='gzip')
+    print({'included_manuscripts': len(included_records), 'report_rows': len(reports_df),
+           'reports_per_source': reports_df['source'].value_counts().to_dict(),
+           'xPeerd_boilerplate_characters_removed': boilerplate_removed_chars})
+    # CELL 4 — Deterministic concern-unit extraction and observable TRACE-R features
+    MIN_WORDS = CONFIG['minimum_unit_words']
+    WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9'’-]*\b")
+    HEADING_RE = re.compile(r'^[A-Z][A-Za-z0-9 /&()\-]{1,70}:?$')
+    BULLET_RE = re.compile(r'^\s*(?:[-*•]+|\d+[.)]|[A-Za-z][.)])\s*')
+
+    ACTION_RE = re.compile(r'\b(should|must|need(?:s|ed)? to|recommend|please|consider|clarify|add|include|report|explain|provide|revise|justify|discuss|correct|remove|define|specify|describe|address|ensure)\b', re.I)
+    RATIONALE_RE = re.compile(r'\b(because|since|therefore|thus|hence|so that|which (?:may|could|would)|leading to|due to|in order to|otherwise|this (?:limits|weakens|undermines|prevents))\b', re.I)
+    CONCERN_RE = re.compile(r'\b(unclear|insufficient|missing|lack(?:s|ing)?|limitation|concern|problem|issue|incorrect|inconsistent|unsupported|overstated|bias|confound|error|weakness|ambiguous|inadequate|not reported|not described|fails? to|cannot|could not)\b', re.I)
+    PRAISE_RE = re.compile(r'\b(strength|well written|clear|excellent|valuable|interesting|appropriate|adequate|meticulous|original)\b', re.I)
+    TARGET_RE = re.compile(r'\b(abstract|introduction|method(?:s|ology)?|results?|discussion|conclusion|figure|fig\.?|table|supplement|appendix|page|paragraph|section|equation|reference|citation|line|analysis|sample|cohort|dataset)\b', re.I)
+
+    CATEGORY_RULES = [
+        ('statistics', re.compile(r'\b(statistic|regression|p[- ]?value|confidence interval|power|sample size|multiple comparison|variance|standard deviation|model fit|effect size|significan)\w*', re.I)),
+        ('study_design', re.compile(r'\b(randomi[sz]|control group|blinding|cohort|case.control|cross.sectional|prospective|retrospective|selection bias|confound|inclusion criteria|exclusion criteria|study design)\b', re.I)),
+        ('methods_reproducibility', re.compile(r'\b(method|protocol|procedure|assay|instrument|software|code|reproduc|replicat|data availability|materials|sampling|measurement)\w*', re.I)),
+        ('data_results', re.compile(r'\b(data|result|figure|table|value|number|outcome|observation|image|plot|dataset)\b', re.I)),
+        ('interpretation_claims', re.compile(r'\b(conclusion|interpret|claim|causal|mechanism|generaliz|overstat|support(?:ed)? by|inference|implication)\w*', re.I)),
+        ('literature_context', re.compile(r'\b(reference|citation|literature|prior work|previous stud|novelty|context|bibliograph)\w*', re.I)),
+        ('ethics_reporting', re.compile(r'\b(ethic|consent|approval|registration|conflict of interest|funding|reporting guideline|privacy|patient)\w*', re.I)),
+        ('presentation_clarity', re.compile(r'\b(language|grammar|typo|format|formatting|wording|readability|clarity|structure|caption|legend|spelling|sentence|terminology)\w*', re.I)),
+    ]
+    CATEGORY_ORDER = [x[0] for x in CATEGORY_RULES] + ['other_scientific']
+
+    def words(text):
+        return WORD_RE.findall(text or '')
+
+    def classify_section(line):
+        low = re.sub(r'[^a-z ]+', ' ', line.lower())
+        if any(k in low for k in ['strength', 'positive aspect']): return 'strengths'
+        if any(k in low for k in ['concern', 'weakness', 'major issue', 'minor issue', 'suggested improvement', 'key issue']): return 'concerns'
+        if any(k in low for k in ['recommendation', 'overall judgment', 'decision', 'verdict']): return 'recommendation'
+        if any(k in low for k in ['summary', 'overview', 'assessment']): return 'summary'
+        return 'other'
+
+    def split_sentences(line):

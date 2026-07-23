@@ -1,0 +1,30 @@
+{
+  "dataset": {
+    "doi": "10.5281/zenodo.21479700",
+    "record_id": "21479700",
+    "filename": "xpeerd_benchmark_study_2026_v1.0.0.zip",
+    "sha256": "0ab7cb88d2b2db687b586ad303e017a9db0a8104e10f1b8e18c30b8f6a75129c",
+    "md5": "95bb05a1d2164d66db24a5176749aa77"
+  },
+  "cohort": {
+    "required_nonempty_human_reports": 2,
+    "required_nonempty_xPeerd_reports": 2
+  },
+  "analysis": {
+    "seed": 20260723,
+    "minimum_unit_words": 5,
+    "manuscript_chunk_words": 160,
+    "manuscript_chunk_overlap_words": 40,
+    "default_match_threshold": 0.35,
+    "sensitivity_thresholds": [0.25, 0.3, 0.35, 0.4, 0.45, 0.5],
+    "bootstrap_replicates": 2000,
+    "permutation_replicates": 1999
+  },
+  "expected": {
+    "all_records": 1108,
+    "exactly_two_human": 802,
+    "strict_two_vs_two": 271,
+    "excluded": 837,
+    "reports": 1084
+  }
+}
