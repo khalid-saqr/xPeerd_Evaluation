@@ -1,0 +1,145 @@
+from __future__ import annotations
+import os
+os.environ.setdefault('PYTHONHASHSEED','20260723')
+os.environ.setdefault('OMP_NUM_THREADS','1')
+os.environ.setdefault('OPENBLAS_NUM_THREADS','1')
+os.environ.setdefault('MKL_NUM_THREADS','1')
+os.environ.setdefault('NUMEXPR_NUM_THREADS','1')
+import re, json, gzip, math, random, hashlib, platform, warnings, zipfile, shutil
+from pathlib import Path
+from datetime import datetime, timezone
+from collections import Counter, defaultdict
+import matplotlib
+matplotlib.use('Agg')
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from scipy.optimize import linear_sum_assignment
+from scipy.stats import wilcoxon, pearsonr, spearmanr, kendalltau, binomtest, rankdata
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import linear_kernel
+from sklearn.metrics import cohen_kappa_score
+warnings.filterwarnings('ignore', category=FutureWarning)
+
+EXPECTED_SHA256='0ab7cb88d2b2db687b586ad303e017a9db0a8104e10f1b8e18c30b8f6a75129c'
+
+def sha256_file(path, block=1024*1024):
+    h=hashlib.sha256()
+    with open(path,'rb') as f:
+        for chunk in iter(lambda:f.read(block),b''): h.update(chunk)
+    return h.hexdigest()
+
+def run_analysis(zip_path, output_root):
+    ZIP_PATH=Path(zip_path).expanduser().resolve()
+    TRACE_ROOT=Path(output_root).expanduser().resolve()
+    if not ZIP_PATH.exists(): raise FileNotFoundError(ZIP_PATH)
+    if sha256_file(ZIP_PATH)!=EXPECTED_SHA256: raise RuntimeError('Source SHA-256 mismatch')
+    SEED=20260723; random.seed(SEED); np.random.seed(SEED)
+    TRACE_ROOT.mkdir(parents=True,exist_ok=True)
+    for name in ['data','tables','figures','logs']:
+        p=TRACE_ROOT/name
+        if p.exists(): shutil.rmtree(p)
+    for fn in ['config.json','cohort_summary.json','output_manifest.csv','TRACE_R_COMPLETION_REPORT.json']:
+        p=TRACE_ROOT/fn
+        if p.exists(): p.unlink()
+    DIRS={name:TRACE_ROOT/name for name in ['data','tables','figures','logs']}
+    for p in DIRS.values(): p.mkdir(parents=True,exist_ok=True)
+    CONFIG={'seed':SEED,'required_human_reviewers':2,'required_xPeerd_reviewers':2,'minimum_unit_words':5,
+      'manuscript_chunk_words':160,'manuscript_chunk_overlap_words':40,'default_match_threshold':0.35,
+      'sensitivity_thresholds':[0.25,0.30,0.35,0.40,0.45,0.50],
+      'bootstrap_replicates':2000,'permutation_replicates':1999,
+      'created_utc':datetime.now(timezone.utc).isoformat(),'python':platform.python_version(),
+      'input_zip':ZIP_PATH.name,'input_sha256':sha256_file(ZIP_PATH)}
+    (TRACE_ROOT/'config.json').write_text(json.dumps(CONFIG,indent=2),encoding='utf-8')
+    # CELL 2 — Load, validate, and establish transparent mutually exclusive exclusions
+    with zipfile.ZipFile(ZIP_PATH, 'r') as zf:
+        members = [n for n in zf.namelist() if n.endswith('.jsonl.gz')]
+        if len(members) != 1:
+            raise RuntimeError(f'Expected exactly one .jsonl.gz member; found {members}')
+        JSONL_MEMBER = members[0]
+        with zf.open(JSONL_MEMBER, 'r') as raw, gzip.GzipFile(fileobj=raw, mode='rb') as gz:
+            records = [json.loads(line) for line in gz if line.strip()]
+
+    REQUIRED_TOP = {'benchmark_id', 'document_id', 'manuscript', 'human_reviews', 'xpeer_simulation'}
+    if not records:
+        raise RuntimeError('Dataset contains zero records.')
+    for i, record in enumerate(records):
+        missing = REQUIRED_TOP - set(record)
+        if missing:
+            raise RuntimeError(f'Record {i} missing top-level fields: {sorted(missing)}')
+
+    def nonempty_text(value):
+        return isinstance(value, str) and bool(value.strip())
+
+    audit = []
+    for i, r in enumerate(records):
+        humans = r.get('human_reviews') or []
+        x = r.get('xpeer_simulation') or {}
+        n_human = sum(isinstance(h, dict) and nonempty_text(h.get('review_text')) for h in humans)
+        n_xpeer = sum(nonempty_text(x.get(k)) for k in ('Reviewer1', 'Reviewer2'))
+        manuscript_ok = nonempty_text((r.get('manuscript') or {}).get('manuscript_text'))
+
+        if n_human != 2:
+            reason = f'exclude_human_review_count_{n_human}'
+            include = False
+        elif not manuscript_ok:
+            reason = 'exclude_missing_manuscript_text'
+            include = False
+        elif n_xpeer != 2:
+            reason = f'exclude_xPeerd_reviewer_count_{n_xpeer}'
+            include = False
+        else:
+            reason = 'include_exactly_two_human_and_two_xPeerd'
+            include = True
+
+        audit.append({
+            'record_index': i,
+            'benchmark_id': r.get('benchmark_id'),
+            'document_id': r.get('document_id'),
+            'nonempty_human_review_count': n_human,
+            'nonempty_xPeerd_reviewer_count': n_xpeer,
+            'manuscript_text_present': manuscript_ok,
+            'included': include,
+            'criterion': reason,
+        })
+
+    audit_df = pd.DataFrame(audit)
+    if audit_df['benchmark_id'].duplicated().any():
+        dupes = audit_df.loc[audit_df['benchmark_id'].duplicated(), 'benchmark_id'].tolist()[:10]
+        raise RuntimeError(f'Duplicate benchmark_id values detected: {dupes}')
+
+    exclusion_summary = (audit_df.groupby(['included', 'criterion'], dropna=False)
+                         .size().rename('n').reset_index().sort_values(['included', 'criterion']))
+    included_indices = audit_df.loc[audit_df['included'], 'record_index'].astype(int).tolist()
+    included_records = [records[i] for i in included_indices]
+
+    # Pinned-package invariants. A changed package fails loudly instead of silently changing the cohort.
+    EXPECTED = {'all_records': 1108, 'exactly_two_human': 802, 'strict_two_vs_two': 271}
+    observed = {
+        'all_records': len(records),
+        'exactly_two_human': int((audit_df['nonempty_human_review_count'] == 2).sum()),
+        'strict_two_vs_two': len(included_records),
+    }
+    for key, expected in EXPECTED.items():
+        if observed[key] != expected:
+            raise RuntimeError(f'Pinned dataset invariant failed for {key}: {observed[key]} != {expected}')
+    if exclusion_summary['n'].sum() != len(records):
+        raise RuntimeError('Exclusion counts do not reconcile to total records.')
+
+    summary = {
+        'package': ZIP_PATH.name,
+        'jsonl_member': JSONL_MEMBER,
+        **observed,
+        'excluded_total': len(records) - len(included_records),
+        'criteria_are_mutually_exclusive': True,
+    }
+
+    audit_df.to_csv(DIRS['tables'] / 'cohort_record_audit.csv', index=False)
+    exclusion_summary.to_csv(DIRS['tables'] / 'exclusion_summary.csv', index=False)
+    (TRACE_ROOT / 'cohort_summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+
+    print(json.dumps(summary, indent=2))
+    print('\nMutually exclusive inclusion/exclusion criteria:')
+    print(exclusion_summary.to_string(index=False))
