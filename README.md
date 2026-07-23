@@ -86,7 +86,7 @@ Study 1 writes to `/content/xpeerd_outputs`, including:
 
 [![Open Study 2 in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/khalid-saqr/xPeerd_Evaluation/blob/main/TRACE_R_reproducibility/TRACE_R_reproducible.ipynb)
 
-Study 2 applies **TRACE-R** to paired human and xPeerd reports attached to the same manuscripts. The complete notebook, executable Python package, locked configuration, checksums, tests, reference hashes and environment definitions are under [`TRACE_R_reproducibility/`](TRACE_R_reproducibility/).
+Study 2 applies **TRACE-R** to paired human and xPeerd reports attached to the same manuscripts. The notebook, executable package, locked configuration, checksums, tests, reference hashes and environment definitions are under [`TRACE_R_reproducibility/`](TRACE_R_reproducibility/).
 
 > TRACE-R measures observable textual structure, manuscript attestation, concern correspondence, category coverage, recommendation association and statistical agreement. It does **not** establish scientific correctness, true novelty, complete flaw recall, true severity, epistemic harm or replacement of human reviewers.
 
@@ -116,10 +116,10 @@ For record $i$, define:
 The locked cohort is
 
 ```math
-\mathcal{I}=\left\{i:\ n_H(i)=2\ \land\ n_X(i)=2\ \land\ m(i)=1\right\}.
+\mathcal{I}=\left\{i\mid n_H(i)=2,\ n_X(i)=2,\ m(i)=1\right\}.
 ```
 
-Criteria are applied sequentially and are mutually exclusive:
+Criteria are sequential and mutually exclusive:
 
 | Outcome | Criterion | Records |
 |---|---|---:|
@@ -132,29 +132,19 @@ Criteria are applied sequentially and are mutually exclusive:
 | **Included** | $n_H=2$, $m=1$, $n_X=2$ | **271** |
 | **Total** |  | **1,108** |
 
-The comparative dataset contains
+Each included manuscript contributes two Human reports and two xPeerd reports:
 
 ```math
-271\times\left(2\ \mathrm{Human}+2\ \mathrm{xPeerd}\right)=1{,}084
+271(2+2)=1{,}084.
 ```
 
-reports. Missing xPeerd reports are never imputed or reconstructed.
+Missing xPeerd reports are never imputed or reconstructed.
 
 ## Deterministic concern units
 
 Reports are segmented into sentence-like units. A retained unit must contain at least five words and satisfy a declared concern, action or concern-section rule. Each unit receives auditable features for targeting, rationale, requested action, category, scientific relevance and question form.
 
-The nine categories are:
-
-1. statistics;
-2. study design;
-3. methods/reproducibility;
-4. data/results;
-5. interpretation/claims;
-6. literature/context;
-7. ethics/reporting;
-8. presentation/clarity;
-9. other scientific concerns.
+The nine categories are statistics, study design, methods/reproducibility, data/results, interpretation/claims, literature/context, ethics/reporting, presentation/clarity and other scientific concerns.
 
 For a report with $U$ extracted units and $W$ words, concern density is
 
@@ -166,7 +156,7 @@ Reports with no extracted concern units remain explicit in the analysis with zer
 
 ## Locked TRACE-R dimensions
 
-TRACE-R does not collapse the dimensions into a single epistemic-value score. Unit-level measurements are aggregated within reports and then across the two reports from each source.
+TRACE-R does not collapse its dimensions into one epistemic-value score. Unit-level measurements are aggregated within reports and then across the two reports from each source.
 
 | Dimension | Operational definition |
 |---|---|
@@ -184,19 +174,19 @@ Manuscripts are split into 160-word chunks with a 40-word overlap. Concern units
 For concern unit $u$, let $p^*(u)$ be the manuscript chunk with maximum TF–IDF cosine similarity:
 
 ```math
-s_{\mathrm{TFIDF}}(u)=\cos\!\left(\mathbf{v}_u,\mathbf{v}_{p^*(u)}\right).
+s_{TF}(u)=\cos\left(v_u,v_{p^*(u)}\right).
 ```
 
-For non-stopword content-token sets $C_u$ and $P_{p^*(u)}$,
+Let $C_u$ and $P_{p^*(u)}$ be the non-stopword content-token sets of the concern and selected chunk:
 
 ```math
-o_{\mathrm{token}}(u)=\frac{\left|C_u\cap P_{p^*(u)}\right|}{\max\!\left(1,\left|C_u\right|\right)}.
+o(u)=\frac{\left|C_u\cap P_{p^*(u)}\right|}{\max\left(1,\left|C_u\right|\right)}.
 ```
 
-The locked proxy is
+The locked attested-alignment proxy is
 
 ```math
-A(u)=0.75\,s_{\mathrm{TFIDF}}(u)+0.25\,o_{\mathrm{token}}(u).
+A(u)=0.75s_{TF}(u)+0.25o(u).
 ```
 
 This measures textual attestation to manuscript content, not scientific validity.
@@ -211,22 +201,22 @@ C_r=\frac{B_r}{9}.
 
 ## Unique human–xPeerd concern correspondence
 
-For each manuscript, human and xPeerd concern units use the same sublinear unigram/bigram TF–IDF space. Let
+For each manuscript, Human and xPeerd concern units use the same sublinear unigram/bigram TF–IDF space. Their cross-source similarity matrix is
 
 ```math
-S_{uv}=\cos\!\left(\mathbf{v}^{H}_{u},\mathbf{v}^{X}_{v}\right)
+S_{uv}=\cos\left(v^H_u,v^X_v\right).
 ```
 
-be the cross-source similarity matrix. Hungarian linear assignment selects
+The Hungarian assignment selects a unique pairing $\pi^*$ whose summed similarity is maximal:
 
 ```math
-\pi^*=\underset{\pi}{\operatorname{arg\,max}}\ \sum_{(u,v)\in\pi}S_{uv}.
+\sum_{(u,v)\in\pi^*}S_{uv}=\max_{\pi}\sum_{(u,v)\in\pi}S_{uv}.
 ```
 
-At threshold $\tau$,
+At threshold $\tau$, the accepted pairs are
 
 ```math
-M_{\tau}=\left\{(u,v)\in\pi^*:S_{uv}\ge\tau\right\}.
+M_\tau=\left\{(u,v)\in\pi^*\mid S_{uv}\ge\tau\right\}.
 ```
 
 The primary threshold is $\tau=0.35$, with sensitivity analysis over
@@ -235,22 +225,22 @@ The primary threshold is $\tau=0.35$, with sensitivity analysis over
 \tau\in\left\{0.25,0.30,0.35,0.40,0.45,0.50\right\}.
 ```
 
-The directional correspondence proxies are
+With $U_H$ Human units and $U_X$ xPeerd units, the directional correspondence proxies are
 
 ```math
-\mathrm{Human\ recovery\ proxy}=\frac{|M_{0.35}|}{\max(1,U_H)},
+R_H=\frac{|M_{0.35}|}{\max(1,U_H)},
 ```
 
 ```math
-\mathrm{xPeerd\ alignment\ proxy}=\frac{|M_{0.35}|}{\max(1,U_X)},
+R_X=\frac{|M_{0.35}|}{\max(1,U_X)}.
 ```
 
-where $U_H$ and $U_X$ are human and xPeerd concern-unit counts. These are not precision or recall against scientific ground truth.
+$R_H$ is the Human-recovery proxy and $R_X$ is the xPeerd-alignment proxy. Neither is precision or recall against scientific ground truth.
 
-Within-source redundancy is
+For within-source redundancy, let $M_{12}$ be the accepted unique matches between Reviewer 1 and Reviewer 2. Then
 
 ```math
-R_{\mathrm{dup}}=\frac{\#\left\{\text{assigned reviewer-unit pairs with }S\ge0.35\right\}}{\max\!\left(1,\min(U_1,U_2)\right)}.
+R_{dup}=\frac{|M_{12}|}{\max\left(1,\min(U_1,U_2)\right)}.
 ```
 
 ## Deterministic and probabilistic stress tests
@@ -262,7 +252,11 @@ Association, agreement and source differences are reported separately.
 For paired manuscript-level measurements $H_i$ and $X_i$,
 
 ```math
-d_i=X_i-H_i,\qquad \Delta=\frac{1}{N}\sum_{i=1}^{N}d_i.
+d_i=X_i-H_i,
+```
+
+```math
+\Delta=\frac{1}{N}\sum_{i=1}^{N}d_i.
 ```
 
 The package reports the paired mean difference, percentile bootstrap 95% interval, Wilcoxon signed-rank test, paired rank-biserial effect size and a two-sided sign-flip permutation test.
@@ -270,8 +264,10 @@ The package reports the paired mean difference, percentile bootstrap 95% interva
 For $B=1{,}999$ sign flips, the Monte Carlo value is
 
 ```math
-p=\frac{1+\#\left\{|\bar d^{*}|\ge|\bar d|\right\}}{B+1}.
+p=\frac{1+K}{B+1},
 ```
+
+where $K$ is the number of sign-flipped replicates satisfying $|\bar d^*|\ge|\bar d|$.
 
 ### Association and agreement
 
@@ -294,32 +290,40 @@ Lin's concordance coefficient is
 Error and bias measures are
 
 ```math
-\operatorname{MAE}=\frac{1}{N}\sum_{i=1}^{N}|X_i-H_i|,
+MAE=\frac{1}{N}\sum_{i=1}^{N}|X_i-H_i|,
 ```
 
 ```math
-\operatorname{RMSE}=\sqrt{\frac{1}{N}\sum_{i=1}^{N}(X_i-H_i)^2},
+RMSE=\sqrt{\frac{1}{N}\sum_{i=1}^{N}(X_i-H_i)^2},
 ```
 
 ```math
-\mathrm{bias}=\bar d,\qquad \mathrm{limits\ of\ agreement}=\bar d\pm1.96s_d.
+b=\bar d,
+```
+
+```math
+LoA_-=\bar d-1.96s_d,\qquad LoA_+=\bar d+1.96s_d.
 ```
 
 ### Category correspondence
 
-For each category, the package reports prevalence, Jaccard overlap, phi correlation, exact McNemar tests and a Haldane-corrected paired odds ratio:
+For each concern category, TRACE-R reports prevalence, Jaccard overlap, phi correlation, exact McNemar tests and the Haldane-corrected paired odds ratio
 
 ```math
-\operatorname{OR}_{H}=\frac{n_{\mathrm{xPeerd\text{-}only}}+0.5}{n_{\mathrm{Human\text{-}only}}+0.5}.
+OR_H=\frac{n_X+0.5}{n_H+0.5},
 ```
+
+where $n_X$ is the xPeerd-only count and $n_H$ is the Human-only count.
 
 ### Recommendation correspondence
 
-Human metadata and auditable xPeerd decision lines are normalized to
+Recommendations are normalized to an ordinal scale:
 
-```math
-\mathrm{reject}=0,\qquad \mathrm{revise/reservations}=1,\qquad \mathrm{approve}=2.
-```
+| Recommendation | Ordinal value |
+|---|---:|
+| Reject | 0 |
+| Revise or approve with reservations | 1 |
+| Approve | 2 |
 
 The secondary recommendation analysis reports source-level consensus means, Spearman association, Lin concordance, quadratic weighted kappa, exact rounded agreement and ordinal MAE. Reviewer identities are not treated as corresponding across sources.
 
