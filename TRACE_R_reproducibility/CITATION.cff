@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "Cite this software package and the source dataset DOI 10.5281/zenodo.21479700."
+title: "TRACE-R reproducibility package"
+version: 1.0.0
+type: software
+authors:
+  - given-names: Khalid
+    family-names: Saqr
+repository-code: "https://github.com/khalid-saqr/xPeerd_Evaluation"
