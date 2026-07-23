@@ -1,0 +1,160 @@
+               'A_attested_alignment','C_coverage','E_executability','R_relevance','redundancy_proxy']
+    TRACE_METRICS = ['T_targeting','R_reasoning','A_attested_alignment','C_coverage','E_executability','R_relevance']
+    wide = source_profile.pivot(index='benchmark_id', columns='source', values=METRICS).sort_index()
+
+
+    def bh_adjust(pvalues):
+        p = np.asarray(pvalues, dtype=float)
+        out = np.full(len(p), np.nan)
+        mask = np.isfinite(p)
+        if not mask.any():
+            return out
+        pv = p[mask]
+        order = np.argsort(pv)
+        ranked = pv[order] * len(pv) / np.arange(1, len(pv)+1)
+        ranked = np.minimum.accumulate(ranked[::-1])[::-1]
+        adjusted = np.empty_like(ranked)
+        adjusted[order] = np.clip(ranked, 0, 1)
+        out[np.flatnonzero(mask)] = adjusted
+        return out
+
+
+    def finite_pair(a, b):
+        a, b = np.asarray(a, float), np.asarray(b, float)
+        keep = np.isfinite(a) & np.isfinite(b)
+        return a[keep], b[keep]
+
+
+    def lin_ccc(a, b):
+        a, b = finite_pair(a, b)
+        if len(a) < 3 or np.std(a) == 0 or np.std(b) == 0:
+            return np.nan
+        cov = np.cov(a, b, ddof=1)[0,1]
+        return float(2*cov / (np.var(a,ddof=1)+np.var(b,ddof=1)+(a.mean()-b.mean())**2))
+
+
+    def distance_correlation(a, b):
+        a, b = finite_pair(a, b)
+        if len(a) < 3:
+            return np.nan
+        A = np.abs(a[:,None] - a[None,:])
+        B = np.abs(b[:,None] - b[None,:])
+        A -= A.mean(axis=0)[None,:] + A.mean(axis=1)[:,None] - A.mean()
+        B -= B.mean(axis=0)[None,:] + B.mean(axis=1)[:,None] - B.mean()
+        dcov2 = np.mean(A*B)
+        dvarx = np.mean(A*A)
+        dvary = np.mean(B*B)
+        if dvarx <= 0 or dvary <= 0:
+            return np.nan
+        return float(np.sqrt(max(dcov2,0) / np.sqrt(dvarx*dvary)))
+
+
+    def partial_rank_corr(a, b, control_a, control_b):
+        a, b = finite_pair(a, b)
+        ca, cb = finite_pair(control_a, control_b)
+        if not (len(a) == len(b) == len(ca) == len(cb)) or len(a) < 4:
+            return np.nan
+        ra, rb, rca, rcb = map(rankdata, (a,b,ca,cb))
+        Xa = np.column_stack([np.ones(len(a)), rca])
+        Xb = np.column_stack([np.ones(len(b)), rcb])
+        resa = ra - Xa @ np.linalg.lstsq(Xa, ra, rcond=None)[0]
+        resb = rb - Xb @ np.linalg.lstsq(Xb, rb, rcond=None)[0]
+        return float(pearsonr(resa, resb).statistic) if np.std(resa) and np.std(resb) else np.nan
+
+
+    def paired_rank_biserial(d):
+        d = np.asarray(d, float)
+        d = d[np.isfinite(d) & (d != 0)]
+        if len(d) == 0:
+            return 0.0
+        ranks = rankdata(np.abs(d))
+        pos, neg = ranks[d > 0].sum(), ranks[d < 0].sum()
+        return float((pos-neg)/(pos+neg))
+
+
+    def bootstrap_stat(a, b, statistic, reps, seed):
+        a, b = finite_pair(a, b)
+        rng = np.random.default_rng(seed)
+        vals = []
+        for _ in range(reps):
+            idx = rng.integers(0, len(a), len(a))
+            value = statistic(a[idx], b[idx])
+            if np.isfinite(value):
+                vals.append(value)
+        if not vals:
+            return np.nan, np.nan
+        return float(np.quantile(vals,.025)), float(np.quantile(vals,.975))
+
+
+    def paired_mean_bootstrap(h, x, reps, seed):
+        h, x = finite_pair(h, x)
+        d = x-h
+        rng = np.random.default_rng(seed)
+        idx = rng.integers(0, len(d), size=(reps, len(d)))
+        means = d[idx].mean(axis=1)
+        return float(d.mean()), float(np.quantile(means,.025)), float(np.quantile(means,.975))
+
+
+    def sign_flip_pvalue(d, reps, seed):
+        d = np.asarray(d, float)
+        d = d[np.isfinite(d)]
+        if len(d) == 0:
+            return np.nan
+        obs = abs(d.mean())
+        rng = np.random.default_rng(seed)
+        signs = rng.choice((-1.0,1.0), size=(reps,len(d)))
+        null = np.abs((signs*d).mean(axis=1))
+        return float((1 + np.count_nonzero(null >= obs)) / (reps + 1))
+
+
+    def permutation_spearman_p(a, b, reps, seed):
+        a, b = finite_pair(a,b)
+        if len(a) < 4 or np.std(a)==0 or np.std(b)==0:
+            return np.nan
+        obs = abs(spearmanr(a,b).statistic)
+        rng = np.random.default_rng(seed)
+        exceed = 0
+        for _ in range(reps):
+            stat = abs(spearmanr(a, rng.permutation(b)).statistic)
+            exceed += int(stat >= obs)
+        return float((exceed+1)/(reps+1))
+
+    # A. Paired source differences: magnitude, bootstrap uncertainty, rank test, and sign-flip test.
+    difference_rows = []
+    for j, metric in enumerate(METRICS):
+        h = wide[(metric,'Human')].to_numpy(float)
+        x = wide[(metric,'xPeerd')].to_numpy(float)
+        d = x-h
+        delta, lo, hi = paired_mean_bootstrap(h,x,CONFIG['bootstrap_replicates'],SEED+100+j)
+        try:
+            wilcox_p = float(wilcoxon(x,h,zero_method='wilcox',alternative='two-sided').pvalue)
+        except ValueError:
+            wilcox_p = 1.0
+        difference_rows.append({
+            'metric':metric,'n_pairs':len(h),'human_mean':float(np.mean(h)),'xPeerd_mean':float(np.mean(x)),
+            'human_median':float(np.median(h)),'xPeerd_median':float(np.median(x)),
+            'xPeerd_minus_human_mean':delta,'bootstrap_95ci_low':lo,'bootstrap_95ci_high':hi,
+            'paired_rank_biserial':paired_rank_biserial(d),'paired_wilcoxon_p':wilcox_p,
+            'sign_flip_permutation_p':sign_flip_pvalue(d,CONFIG['permutation_replicates'],SEED+200+j),
+        })
+    paired_difference_tests = pd.DataFrame(difference_rows)
+    paired_difference_tests['wilcoxon_bh_q'] = bh_adjust(paired_difference_tests['paired_wilcoxon_p'])
+    paired_difference_tests['sign_flip_bh_q'] = bh_adjust(paired_difference_tests['sign_flip_permutation_p'])
+    paired_difference_tests.to_csv(DIRS['tables'] / 'paired_difference_tests.csv', index=False)
+
+    # B. Cross-source association and agreement are deliberately reported as separate concepts.
+    association_rows = []
+    for j, metric in enumerate(METRICS):
+        h = wide[(metric,'Human')].to_numpy(float)
+        x = wide[(metric,'xPeerd')].to_numpy(float)
+        pear = pearsonr(h,x) if np.std(h) and np.std(x) else None
+        spear = spearmanr(h,x) if np.std(h) and np.std(x) else None
+        kend = kendalltau(h,x,variant='b') if np.std(h) and np.std(x) else None
+        ccc = lin_ccc(h,x)
+        rho_lo, rho_hi = bootstrap_stat(h,x,lambda a,b: float(spearmanr(a,b).statistic),CONFIG['bootstrap_replicates'],SEED+300+j)
+        ccc_lo, ccc_hi = bootstrap_stat(h,x,lin_ccc,CONFIG['bootstrap_replicates'],SEED+400+j)
+        bias = float(np.mean(x-h)); sd_diff = float(np.std(x-h,ddof=1))
+        partial = np.nan if metric == 'report_word_count' else partial_rank_corr(
+            h,x,wide[('report_word_count','Human')].to_numpy(float),wide[('report_word_count','xPeerd')].to_numpy(float))
+        association_rows.append({
+            'metric':metric,'n_pairs':len(h),
