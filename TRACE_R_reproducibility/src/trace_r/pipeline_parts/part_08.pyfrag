@@ -1,0 +1,87 @@
+    def panel_label(ax,label): ax.text(-0.13,1.07,label,transform=ax.transAxes,fontweight='bold',fontsize=10,va='top')
+    def source_legend_once(ax,**kwargs):
+        options={'loc':'best','frameon':False,'ncol':2,'handlelength':1.4}; options.update(kwargs); ax.legend(handles=LEGEND_HANDLES,**options)
+    def clean_ax(ax): ax.spines[['top','right']].set_visible(False)
+    def assert_one_source_legend(fig, panel_a):
+        legends=[ax.get_legend() for ax in fig.axes if ax.get_legend() is not None]
+        if len(legends)!=1 or panel_a.get_legend() is None:
+            raise RuntimeError(f'Expected one source legend in panel a; found {len(legends)}.')
+    def save_figure(fig,name):
+        fig.savefig(DIRS['figures']/f'{name}.pdf',bbox_inches=None)
+        fig.savefig(DIRS['figures']/f'{name}.png',dpi=400,bbox_inches=None)
+
+    def split_violin(ax,h,x,ylabel,transform=None):
+        h=np.asarray(h,float); x=np.asarray(x,float)
+        if transform is not None: h,x=transform(h),transform(x)
+        for vals,color,side in [(h,HUMAN_COLOR,'left'),(x,XPEERD_COLOR,'right')]:
+            parts=ax.violinplot(vals,positions=[1],widths=.9,showextrema=False)
+            body=parts['bodies'][0]; body.set_facecolor(color); body.set_edgecolor('none'); body.set_alpha(.75)
+            verts=body.get_paths()[0].vertices
+            verts[:,0]=np.minimum(verts[:,0],1) if side=='left' else np.maximum(verts[:,0],1)
+        ax.scatter([.94,1.06],[np.median(h),np.median(x)],s=18,c=[HUMAN_COLOR,XPEERD_COLOR],edgecolor='white',linewidth=.5,zorder=4)
+        ax.set_xticks([1],['Paired cohort']); ax.set_ylabel(ylabel); clean_ax(ax)
+
+    def ecdf(ax,values,color):
+        v=np.sort(np.asarray(values,float)); y=np.arange(1,len(v)+1)/len(v)
+        ax.step(v,y,where='post',color=color,lw=1.6)
+
+    nature_theme()
+    fig,axs=plt.subplots(2,2,figsize=(7.2,5.5),constrained_layout=True)
+    # a: split violin
+    split_violin(axs[0,0],source_profile.loc[source_profile.source=='Human','report_word_count'],
+                 source_profile.loc[source_profile.source=='xPeerd','report_word_count'],'log10 words per manuscript',np.log10)
+    source_legend_once(axs[0,0]); panel_label(axs[0,0],'a')
+    # b: ECDF
+    for source in SOURCE_ORDER:
+        ecdf(axs[0,1],source_profile.loc[source_profile.source==source,'concerns_per_1000_words'],SOURCE_COLORS[source])
+    axs[0,1].set_xlabel('Concern units per 1,000 words'); axs[0,1].set_ylabel('Cumulative proportion'); clean_ax(axs[0,1]); panel_label(axs[0,1],'b')
+    # c: paired hexbin
+    h=wide[('concern_count','Human')].to_numpy(float); x=wide[('concern_count','xPeerd')].to_numpy(float)
+    hb=axs[1,0].hexbin(np.log1p(h),np.log1p(x),gridsize=22,mincnt=1,cmap='Greys')
+    lims=[min(np.log1p(h).min(),np.log1p(x).min()),max(np.log1p(h).max(),np.log1p(x).max())]
+    axs[1,0].plot(lims,lims,'--',color='0.35',lw=.9); axs[1,0].set(xlabel='Human log(1 + concern count)',ylabel='xPeerd log(1 + concern count)'); clean_ax(axs[1,0]); panel_label(axs[1,0],'c')
+    # d: paired quintile calibration curve
+    metric='C_coverage'; tmp=pd.DataFrame({'Human':wide[(metric,'Human')],'xPeerd':wide[(metric,'xPeerd')]})
+    tmp['quintile']=pd.qcut(tmp['Human'].rank(method='first'),5,labels=False)
+    cal=tmp.groupby('quintile').agg(Human=('Human','mean'),xPeerd=('xPeerd','mean')).reset_index()
+    axs[1,1].plot(cal.quintile+1,cal.Human,marker='o',color=HUMAN_COLOR,lw=1.5)
+    axs[1,1].plot(cal.quintile+1,cal.xPeerd,marker='o',color=XPEERD_COLOR,lw=1.5)
+    axs[1,1].set(xlabel='Human coverage quintile',ylabel='Mean coverage',xticks=range(1,6),ylim=(0,1)); clean_ax(axs[1,1]); panel_label(axs[1,1],'d')
+    fig.suptitle('Distributional and paired scale diagnostics',fontsize=10)
+    assert_one_source_legend(fig,axs[0,0]); save_figure(fig,'Figure_1_distribution_and_pairing'); plt.close(fig)
+
+    # FIGURE CELL 2 — Split radar, effect forest, and correlation/agreement map
+    nature_theme()
+    fig=plt.figure(figsize=(7.2,5.7),constrained_layout=True)
+    gs=fig.add_gridspec(2,2)
+    ax_a=fig.add_subplot(gs[0,0],projection='polar'); ax_b=fig.add_subplot(gs[0,1]); ax_c=fig.add_subplot(gs[1,0]); ax_d=fig.add_subplot(gs[1,1])
+    # a: split radar bars (paired radial bars at each TRACE-R spoke)
+    labels=['T','R','A','C','E','R₂']; means=source_profile.groupby('source')[TRACE_METRICS].mean()
+    angles=np.linspace(0,2*np.pi,len(labels),endpoint=False); width=2*np.pi/len(labels)*.34
+    ax_a.bar(angles-width/2,means.loc['Human'].values,width=width,color=HUMAN_COLOR,alpha=.72,label='Human')
+    ax_a.bar(angles+width/2,means.loc['xPeerd'].values,width=width,color=XPEERD_COLOR,alpha=.72,label='xPeerd')
+    ax_a.set_xticks(angles,labels); ax_a.set_ylim(0,1); ax_a.set_yticks([.25,.5,.75,1]); ax_a.set_yticklabels(['.25','.50','.75','1.0'],fontsize=6)
+    source_legend_once(ax_a); panel_label(ax_a,'a')
+    # b: forest plot of paired differences
+    forest=paired_difference_tests[paired_difference_tests.metric.isin(TRACE_METRICS)].copy().iloc[::-1]
+    y=np.arange(len(forest)); ax_b.hlines(y,forest.bootstrap_95ci_low,forest.bootstrap_95ci_high,color='0.35',lw=1.2)
+    ax_b.scatter(forest.xPeerd_minus_human_mean,y,c=[XPEERD_COLOR if v>=0 else HUMAN_COLOR for v in forest.xPeerd_minus_human_mean],s=25,zorder=3)
+    ax_b.axvline(0,color='0.25',ls='--',lw=.8); ax_b.set_yticks(y,[m.replace('_',' ') for m in forest.metric]); ax_b.set_xlabel('xPeerd − Human mean (95% bootstrap CI)'); clean_ax(ax_b); panel_label(ax_b,'b')
+    # c: association/agreement heatmap
+    cols=['pearson_r','spearman_rho','kendall_tau_b','distance_correlation','lin_concordance_ccc']
+    heat=cross_source_correlations.set_index('metric').loc[TRACE_METRICS,cols]
+    im=ax_c.imshow(heat.values,aspect='auto',vmin=-1,vmax=1,cmap='coolwarm')
+    ax_c.set_xticks(range(len(cols)),['Pearson','Spearman','Kendall','Distance','CCC'],rotation=35,ha='right'); ax_c.set_yticks(range(len(heat)),[m.split('_',1)[-1].replace('_',' ') for m in heat.index])
+    for i in range(heat.shape[0]):
+        for j in range(heat.shape[1]): ax_c.text(j,i,f'{heat.iloc[i,j]:.2f}',ha='center',va='center',fontsize=6,color='black')
+    panel_label(ax_c,'c')
+    # d: association versus concordance dumbbell
+    plot=cross_source_correlations[cross_source_correlations.metric.isin(METRICS)].copy().iloc[::-1]
+    short_names={'report_word_count':'report words','concern_count':'concern count','concerns_per_1000_words':'concern density',
+                 'T_targeting':'targeting','R_reasoning':'reasoning','A_attested_alignment':'attested alignment',
+                 'C_coverage':'coverage','E_executability':'executability','R_relevance':'relevance','redundancy_proxy':'redundancy'}
+    y=np.arange(len(plot))
+    ax_d.hlines(y,plot.lin_concordance_ccc,plot.spearman_rho,color='0.72',lw=1.3)
+    ax_d.scatter(plot.spearman_rho,y,color='0.25',s=22)
+    ax_d.scatter(plot.lin_concordance_ccc,y,color='0.68',s=22)
+    ax_d.axvline(0,color='0.5',ls='--',lw=.7)
