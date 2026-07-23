@@ -1,0 +1,88 @@
+            'pearson_r':float(pear.statistic) if pear else np.nan,'pearson_p':float(pear.pvalue) if pear else np.nan,
+            'spearman_rho':float(spear.statistic) if spear else np.nan,'spearman_p':float(spear.pvalue) if spear else np.nan,
+            'spearman_bootstrap_95ci_low':rho_lo,'spearman_bootstrap_95ci_high':rho_hi,
+            'kendall_tau_b':float(kend.statistic) if kend else np.nan,'kendall_p':float(kend.pvalue) if kend else np.nan,
+            'distance_correlation':distance_correlation(h,x),'partial_spearman_controlling_source_length':partial,
+            'lin_concordance_ccc':ccc,'ccc_bootstrap_95ci_low':ccc_lo,'ccc_bootstrap_95ci_high':ccc_hi,
+            'mae':float(np.mean(np.abs(x-h))),'rmse':float(np.sqrt(np.mean((x-h)**2))),
+            'bland_altman_bias':bias,'bland_altman_lower_loa':bias-1.96*sd_diff,'bland_altman_upper_loa':bias+1.96*sd_diff,
+            'spearman_permutation_p':permutation_spearman_p(h,x,CONFIG['permutation_replicates'],SEED+500+j),
+        })
+    cross_source_correlations = pd.DataFrame(association_rows)
+    for pcol in ['pearson_p','spearman_p','kendall_p','spearman_permutation_p']:
+        cross_source_correlations[pcol.replace('_p','_bh_q')] = bh_adjust(cross_source_correlations[pcol])
+    cross_source_correlations.to_csv(DIRS['tables'] / 'cross_source_correlation_and_agreement_tests.csv', index=False)
+
+    # C. Cross-metric dependence matrices by source and their difference.
+    correlation_matrices = {}
+    for source in ['Human','xPeerd']:
+        mat = source_profile[source_profile.source==source].set_index('benchmark_id')[METRICS].corr(method='spearman')
+        mat.to_csv(DIRS['tables'] / f'spearman_metric_matrix_{source}.csv')
+        correlation_matrices[source] = mat
+    correlation_difference = correlation_matrices['xPeerd'] - correlation_matrices['Human']
+    correlation_difference.to_csv(DIRS['tables'] / 'spearman_metric_matrix_xPeerd_minus_Human.csv')
+
+    # D. Paired category correspondence: prevalence, overlap, phi, and exact McNemar tests.
+    category_rows = []
+    cp = category_presence_df.pivot(index=['benchmark_id','category'],columns='source',values='present').reset_index()
+    for j, category in enumerate(CATEGORY_ORDER):
+        sub = cp[cp.category==category]
+        h = sub['Human'].to_numpy(int); x = sub['xPeerd'].to_numpy(int)
+        both = int(((h==1)&(x==1)).sum()); human_only = int(((h==1)&(x==0)).sum())
+        xPeerd_only = int(((h==0)&(x==1)).sum()); neither = int(((h==0)&(x==0)).sum())
+        discordant = human_only + xPeerd_only
+        mcnemar_p = float(binomtest(xPeerd_only,discordant,0.5,alternative='two-sided').pvalue) if discordant else 1.0
+        phi = float(pearsonr(h,x).statistic) if np.std(h) and np.std(x) else np.nan
+        diff, lo, hi = paired_mean_bootstrap(h,x,CONFIG['bootstrap_replicates'],SEED+600+j)
+        category_rows.append({
+            'category':category,'n_manuscripts':len(sub),'both_present':both,'human_only':human_only,
+            'xPeerd_only':xPeerd_only,'neither':neither,'human_prevalence':float(h.mean()),'xPeerd_prevalence':float(x.mean()),
+            'xPeerd_minus_human_prevalence':diff,'bootstrap_95ci_low':lo,'bootstrap_95ci_high':hi,
+            'jaccard_overlap':both/max(1,both+human_only+xPeerd_only),'phi_correlation':phi,
+            'paired_odds_ratio_haldane':float((xPeerd_only+0.5)/(human_only+0.5)),'mcnemar_exact_p':mcnemar_p,
+        })
+    category_paired_tests = pd.DataFrame(category_rows)
+    category_paired_tests['mcnemar_bh_q'] = bh_adjust(category_paired_tests['mcnemar_exact_p'])
+    category_paired_tests.to_csv(DIRS['tables'] / 'category_paired_correspondence_tests.csv', index=False)
+
+    # E. Manuscript-level recommendation association/agreement, using source consensus only.
+    rec_wide = recommendation_consensus.pivot(index='benchmark_id',columns='source',values=['consensus_mean_ordinal','consensus_rounded','classified_reviewers'])
+    mask = rec_wide[('consensus_mean_ordinal','Human')].notna() & rec_wide[('consensus_mean_ordinal','xPeerd')].notna()
+    rh = rec_wide.loc[mask,('consensus_mean_ordinal','Human')].to_numpy(float)
+    rx = rec_wide.loc[mask,('consensus_mean_ordinal','xPeerd')].to_numpy(float)
+    rh_round = rec_wide.loc[mask,('consensus_rounded','Human')].to_numpy(int)
+    rx_round = rec_wide.loc[mask,('consensus_rounded','xPeerd')].to_numpy(int)
+    rec_spear = spearmanr(rh,rx) if len(rh)>=4 and np.std(rh) and np.std(rx) else None
+    rec_lo, rec_hi = bootstrap_stat(rh,rx,lambda a,b: float(spearmanr(a,b).statistic),CONFIG['bootstrap_replicates'],SEED+700)
+    recommendation_tests = pd.DataFrame([{
+        'n_manuscripts_with_both_consensus':len(rh),
+        'spearman_rho':float(rec_spear.statistic) if rec_spear else np.nan,
+        'spearman_p':float(rec_spear.pvalue) if rec_spear else np.nan,
+        'spearman_bootstrap_95ci_low':rec_lo,'spearman_bootstrap_95ci_high':rec_hi,
+        'spearman_permutation_p':permutation_spearman_p(rh,rx,CONFIG['permutation_replicates'],SEED+701),
+        'lin_concordance_ccc':lin_ccc(rh,rx),
+        'quadratic_weighted_kappa':float(cohen_kappa_score(rh_round,rx_round,weights='quadratic')) if len(rh_round) else np.nan,
+        'rounded_exact_agreement':float(np.mean(rh_round==rx_round)) if len(rh_round) else np.nan,
+        'mae_ordinal':float(np.mean(np.abs(rx-rh))) if len(rh) else np.nan,
+    }])
+    recommendation_tests.to_csv(DIRS['tables'] / 'recommendation_consensus_tests.csv', index=False)
+    recommendation_confusion = pd.crosstab(pd.Series(rh_round,name='Human'),pd.Series(rx_round,name='xPeerd')).reindex(index=[0,1,2],columns=[0,1,2],fill_value=0)
+    recommendation_confusion.to_csv(DIRS['tables'] / 'recommendation_consensus_confusion_matrix.csv')
+
+    sensitivity_summary = (sensitivity_df.groupby(['threshold','source'])['matched_fraction']
+                           .agg(['mean','median']).reset_index())
+    sensitivity_summary.to_csv(DIRS['tables'] / 'matching_threshold_sensitivity_summary.csv', index=False)
+
+    print('Paired differences:')
+    print(paired_difference_tests.round(4).to_string(index=False))
+    print('\nCross-source association versus agreement:')
+    print(cross_source_correlations[['metric','spearman_rho','spearman_bootstrap_95ci_low','spearman_bootstrap_95ci_high',
+                                     'lin_concordance_ccc','distance_correlation','mae','spearman_permutation_p']].round(4).to_string(index=False))
+    print('\nCategory paired tests:')
+    print(category_paired_tests[['category','human_prevalence','xPeerd_prevalence','jaccard_overlap','phi_correlation','mcnemar_bh_q']].round(4).to_string(index=False))
+    print('\nRecommendation consensus tests:')
+    print(recommendation_tests.round(4).to_string(index=False))
+
+    # CELL 10 — Expanded quality gates, provenance, and machine-readable completion report
+    quality_checks = []
+    def check(name, condition, detail=''):
