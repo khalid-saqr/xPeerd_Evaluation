@@ -1,0 +1,52 @@
+            s=recommendations_df[(recommendations_df.source==source)&recommendations_df.recommendation_label.notna()].recommendation_label.value_counts(normalize=True)
+            vals.append(s.get(lab,0))
+        axs[0,1].barh([0,1],vals,left=left,color=color,height=.6)
+        for yi,(l,v) in enumerate(zip(left,vals)):
+            if v>.12: axs[0,1].text(l+v/2,yi,{'reject':'Reject','revise_or_reservations':'Revise','approve':'Approve'}[lab],ha='center',va='center',fontsize=5.5)
+        left+=np.array(vals)
+    axs[0,1].set_yticks([0,1],SOURCE_ORDER); axs[0,1].set_xlim(0,1); axs[0,1].set_xlabel('Classified report distribution'); clean_ax(axs[0,1]); panel_label(axs[0,1],'b')
+    # c: manuscript-consensus confusion heatmap
+    conf=recommendation_confusion.to_numpy()
+    im=axs[1,0].imshow(conf,cmap='Greys')
+    axs[1,0].set_xticks([0,1,2],['Reject','Revise','Approve']); axs[1,0].set_yticks([0,1,2],['Reject','Revise','Approve']); axs[1,0].set_xlabel('xPeerd consensus'); axs[1,0].set_ylabel('Human consensus')
+    for i in range(3):
+        for j in range(3): axs[1,0].text(j,i,str(conf[i,j]),ha='center',va='center',fontsize=7)
+    panel_label(axs[1,0],'c')
+    # d: threshold sensitivity curves
+    for source in SOURCE_ORDER:
+        s=sensitivity_summary[sensitivity_summary.source==source]
+        axs[1,1].plot(s.threshold,s['mean'],marker='o',color=SOURCE_COLORS[source],lw=1.5)
+    ymax=max(.05,float(sensitivity_summary['mean'].max())*1.25); axs[1,1].set(xlabel='Unique-match TF–IDF threshold',ylabel='Mean matched fraction',ylim=(0,ymax)); clean_ax(axs[1,1]); panel_label(axs[1,1],'d')
+    fig.suptitle('Recommendation observability and matching robustness',fontsize=10)
+    assert_one_source_legend(fig,axs[0,0]); save_figure(fig,'Figure_5_recommendation_and_robustness'); plt.close(fig)
+
+    expected_figure_files = [DIRS['figures']/f'{name}.{ext}'
+        for name in ['Figure_1_distribution_and_pairing','Figure_2_TRACE_R_association_agreement','Figure_3_correspondence_and_bias',
+                     'Figure_4_category_correspondence','Figure_5_recommendation_and_robustness']
+        for ext in ('pdf','png')]
+    missing = [str(p) for p in expected_figure_files if not p.exists() or p.stat().st_size == 0]
+    if missing:
+        raise RuntimeError(f'Figure export quality gate failed: {missing}')
+
+    manifest_files=[]
+    for path in sorted(TRACE_ROOT.rglob('*')):
+        if path.is_file() and path.name!='output_manifest.csv':
+            manifest_files.append({'relative_path':str(path.relative_to(TRACE_ROOT)),'bytes':path.stat().st_size,'sha256':sha256_file(path)})
+    pd.DataFrame(manifest_files).to_csv(TRACE_ROOT/'output_manifest.csv',index=False)
+    completion_path=TRACE_ROOT/'TRACE_R_COMPLETION_REPORT.json'
+    completion_final=json.loads(completion_path.read_text(encoding='utf-8'))
+    completion_final['figure_files_passed']=len(expected_figure_files)
+    completion_final['source_legends_per_figure']=1
+    completion_final['output_manifest_entries']=len(manifest_files)
+    completion_path.write_text(json.dumps(completion_final,indent=2),encoding='utf-8')
+    print(f'All {len(expected_figure_files)} figure files passed existence/non-empty checks.')
+    print('Each multipanel figure passed the exactly-one-source-legend-in-panel-a assertion.')
+    print(f'Final output manifest entries: {len(manifest_files)}')
+
+
+    # Create a portable archive of all generated evidence.
+    archive_base = TRACE_ROOT.parent / 'TRACE_R_outputs'
+    archive_path = Path(shutil.make_archive(str(archive_base), 'zip', root_dir=TRACE_ROOT))
+    print(f'Reproduction output archive: {archive_path}')
+
+    return json.loads((TRACE_ROOT/'TRACE_R_COMPLETION_REPORT.json').read_text(encoding='utf-8'))
