@@ -1,116 +1,498 @@
-# xPeerd Analysis Pipeline
+# xPeerd Evaluation Studies
 
-This repository contains a comprehensive Python script designed for analyzing peer review reports. The pipeline processes a CSV file of review data, extracts structured information, classifies each review into an academic supergroup, performs statistical analysis, and generates a series of publication-quality visualizations.
+[![Studies](https://img.shields.io/badge/studies-2-4C78A8)](#studies-at-a-glance)
+[![Python](https://img.shields.io/badge/Python-%E2%89%A53.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Zenodo DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21479700.svg)](https://doi.org/10.5281/zenodo.21479700)
+[![Open Study 2 in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/khalid-saqr/xPeerd_Evaluation/blob/main/TRACE_R_reproducibility/TRACE_R_reproducible.ipynb)
+[![TRACE-R quality gates](https://img.shields.io/badge/TRACE--R%20quality%20gates-22%2F22%20passing-2E7D32)](TRACE_R_reproducibility/REPRODUCTION_TEST_REPORT.md)
+[![Reference checks](https://img.shields.io/badge/reference%20checks-29%2F29%20passing-2E7D32)](TRACE_R_reproducibility/REPRODUCTION_TEST_REPORT.md)
+[![TRACE-R licence](https://img.shields.io/badge/TRACE--R%20licence-MIT-2E7D32)](TRACE_R_reproducibility/LICENSE)
 
-## Overview
+This repository contains two complementary studies of **xPeerd peer-review simulations**:
 
-The core functionality of this script is to transform unstructured peer review text into quantitative data and insightful visualizations. The end-to-end pipeline follows these steps:
+1. **Study 1** characterizes xPeerd simulation performance on its own.
+2. **Study 2 (TRACE-R)** compares paired xPeerd and human peer-review reports using a locked, publicly reproducible framework.
 
-**CSV → JSON (cases) → ASJC Supergroups → Analytics/Stats → JSON (results) → PNG Figures**
+> **Naming note:** `xPeerd` is the canonical product spelling used throughout the analyses. Immutable source filenames and legacy paths may retain the archival lowercase spelling `xpeerd`.
 
-1.  **Ingestion**: Loads peer review data from a user-uploaded CSV file containing `Prompt` and `Completion` columns.
-2.  **Extraction**: Parses each review to identify the review type, editorial decision (Accept, Revise, Reject), major and minor issues, and other metadata.
-3.  **Classification**: Assigns each review to an All Science Journal Classification (ASJC) supergroup (e.g., "Life Sciences", "Physical Sciences") using a sophisticated hybrid model that combines lexical analysis and sentence embeddings.
-4.  **Analysis**: Conducts statistical tests (Chi-squared, Kruskal-Wallis, Spearman's rank correlation) to uncover correlations between variables like review type, academic discipline, decision, and report quality metrics.
-5.  **Export**: Saves all processed data, aggregated statistics, and correlation results into a structured JSON file (`evaluation_results.json`).
-6.  **Visualization**: Generates a set of five professional, "Nature-grade" plots to visually represent the findings and saves them as PNG files.
+## Studies at a glance
 
----
-
-## How It Works: The Pipeline in Detail
-
-### 0. Setup
-
--   **Environment**: Initializes the output directory (`/content/xpeerd_outputs`) and clears any pre-existing files.
--   **Constants**: Defines key parameters for the analysis:
-    -   `ALLOWED`: A list of valid review types to process.
-    -   `DEC_ORDER`: The categorical order for editorial decisions.
-    -   `SHORT_MIN_W`: The minimum word count for a review to be included.
-    -   `ANCHOR_RULE`: The threshold for the "page anchor fraction," a metric for report quality.
--   **Regular Expressions**: Pre-compiles several regex patterns to efficiently find and extract information like review types, editorial decisions, and specific textual cues (e.g., "accept", "reject", page numbers, figures).
-
-### 1. Upload & Preprocessing
-
--   **File Upload**: Uses Google Colab's `files.upload()` utility to prompt the user to upload their source CSV file.
--   **Data Loading**: Reads the CSV into a Pandas DataFrame. It intelligently maps the required `Prompt` and `Completion` columns, ignoring case.
--   **Text Cleaning**: A `clean_markdown` function removes Markdown syntax (`#`, `*`, `_`, etc.) and extra whitespace from the prompt and completion texts to prepare them for analysis.
-
-### 2. Data Extraction
-
--   The script iterates through each row of the DataFrame to extract structured data.
--   **Review Type Detection**: `detect_type_from_prompt` uses regex to determine the review category (e.g., `/HCReview`, `/DAReview`).
--   **Issue Counting**: `count_maj_min` splits the review text into sentences and searches for semantic cues to count "major" (e.g., "fatal flaw", "critical") and "minor" (e.g., "typo", "grammar") issues.
--   **Decision Extraction**: `extract_editorial_decision_and_text_from_completion` uses a series of patterns to find the final recommendation, normalizing it to "Accept," "Revise," or "Reject."
--   **Special Handling**: Logic is included to handle specific review types, like `/DBReviewSim`, where it aggregates decisions from multiple reviewers.
--   **Output**: All extracted information for each valid review is stored in a dictionary and collected into a list. This list is then saved as `extracted_cases.json`.
-
-### 3. ASJC Classification
-
--   A sophisticated hybrid model, `classify_asjc_refined`, assigns each review to one of five core academic supergroups (`Life Sciences`, `Physical Sciences`, `Health Sciences`, `Social Sciences`, `Humanities`) or `Multidisciplinary`.
--   **Lexical Analysis**: The model first performs a lexical scan using `_lexical_scores`, searching for seed keywords specific to each discipline.
--   **Semantic Analysis**: It then uses a pre-trained `SentenceTransformer` model (`all-MiniLM-L6-v2`) to generate a semantic embedding of the review text and compares its cosine similarity to embeddings of the ASJC category definitions.
--   **Hybrid Scoring**: The final classification probability is a weighted combination of the lexical and semantic scores. The weighting (`alpha`) is dynamic, giving more influence to the lexical score when more seed terms are found.
--   **Uncertainty Handling**: The function also calculates confidence scores and an entropy value to flag uncertain classifications.
-
-### 4. Analytics & Correlations
-
--   The script converts the list of report dictionaries back into a Pandas DataFrame for statistical analysis.
--   Categorical data types are enforced for `decision`, `review_type`, and `ASJC_supergroup` to ensure correct ordering and grouping.
--   **Statistical Tests**:
-    -   **Chi-squared test (`chi2_contingency`)**: Used to check for significant associations between categorical variables (e.g., "Is there a relationship between the ASJC supergroup and the final decision?").
-    -   **Kruskal-Wallis H-test (`kruskal`)**: A non-parametric test used to determine if there are statistically significant differences between two or more groups of an independent variable on a continuous or ordinal dependent variable (e.g., "Does the number of 'major issues' differ across review types?").
--   The results of these tests (chi-squared value, p-value, degrees of freedom) are stored in a dictionary.
-
-### 5. Statistics & Final JSON Export
-
--   Additional summary statistics are computed, such as a Spearman correlation (`spearmanr`) between report length and the page anchor rate.
--   All data streams—metadata, individual case data, aggregate counts, and correlation results—are compiled into a single `evaluation` dictionary.
--   This comprehensive dictionary is then exported to `evaluation_results.json`, providing a complete, machine-readable summary of the entire analysis.
-
-### 6. Visualization
-
--   The final stage generates high-quality plots using `matplotlib` and `seaborn` with a "Nature-grade" aesthetic.
--   **Figure 1**: A dual-pane plot showing the distribution of cases across ASJC supergroups and the confidence scores of the classifier.
--   **Figure 2**: A stacked bar chart illustrating the proportion of editorial decisions (Accept, Revise, Reject) within each ASJC supergroup.
--   **Figure 3**: A scatter plot with a regression line showing the relationship between the length of a review and its page anchor rate, annotated with the Spearman's correlation coefficient.
--   **Figure 4**: A violin plot combined with a stripplot to show both the distribution and individual data points for the total number of issues identified, grouped by review type.
--   **Figure 5**: A dual bar chart showing the compliance rate with the page anchoring rule, broken down by both ASJC supergroup and review type.
+| Study | Research question | Comparator | Primary input | Entry point |
+|---|---|---|---|---|
+| **Study 1 — Intrinsic xPeerd benchmark** | What structural, disciplinary, decision, workload and grounding characteristics are observable in xPeerd simulations? | None; xPeerd is analyzed on its own | CSV with `Prompt`, `Completion`, and optional `Time` | [`xPeerdEvaluation.py`](xPeerdEvaluation.py) |
+| **Study 2 — TRACE-R paired evaluation** | How strongly do observable properties of xPeerd reports correspond to paired human reports, and how stable are those findings under deterministic and probabilistic tests? | Two human reports versus two xPeerd reports per manuscript | Version-pinned Zenodo package | [`TRACE_R_reproducibility/`](TRACE_R_reproducibility/) |
 
 ---
 
-## Requirements
+# Study 1 — Intrinsic benchmark of xPeerd simulations
 
-The script is designed to run in a Python environment with the following libraries installed:
--   `numpy`
--   `pandas`
--   `tqdm`
--   `scipy`
--   `sentence-transformers`
--   `matplotlib`
--   `seaborn`
--   `google.colab` (for use in Google Colaboratory)
+Study 1 is the repository's original analysis. Its implementation remains unchanged.
 
-You can install the core dependencies using pip:
+## Purpose
+
+Study 1 evaluates xPeerd peer-review simulations **without treating human reports as a reference set**. It transforms unstructured simulation outputs into structured cases, characterizes the generated reviews, performs disciplinary classification, and produces statistical summaries and publication-oriented figures.
+
+## Workflow
+
+```text
+CSV
+ └─> case extraction
+      ├─> review-type detection
+      ├─> decision normalization
+      ├─> major/minor issue extraction
+      ├─> page/figure/table anchoring
+      └─> report metadata
+           └─> ASJC supergroup classification
+                └─> descriptive and inferential statistics
+                     └─> JSON results and figures
+```
+
+## Input
+
+The Study 1 CSV requires:
+
+| Column | Requirement | Meaning |
+|---|---|---|
+| `Prompt` | Required | Original instruction; used to identify the simulation type |
+| `Completion` | Required | Full xPeerd peer-review simulation |
+| `Time` | Optional | ISO-compatible timestamp |
+
+Supported review modes include `/HCReview`, `/DAReview`, `/DBReviewSim`, `/PRR`, and `/ConfReview`.
+
+## Analysis
+
+The existing Study 1 pipeline performs:
+
+- deterministic parsing of review type, recommendation, major issues, minor issues and anchoring cues;
+- ASJC supergroup classification using lexical evidence and `all-MiniLM-L6-v2` sentence embeddings;
+- uncertainty diagnostics for the disciplinary classifier;
+- decision, workload and anchoring summaries;
+- chi-squared tests for categorical associations;
+- Kruskal–Wallis tests for group differences;
+- Spearman rank correlations for continuous/ordinal relationships;
+- five publication-oriented figures.
+
+## Outputs
+
+Study 1 writes its outputs to `/content/xpeerd_outputs`, including:
+
+- `extracted_cases.json`;
+- `evaluation_results.json`;
+- five PNG figures covering disciplinary composition, decision distributions, length/anchoring relationships, issue distributions and anchoring compliance.
+
+Study 1 answers an **intrinsic characterization** question. It does not estimate agreement with human peer review and should not be interpreted as evidence that a simulation is scientifically correct.
+
+---
+
+# Study 2 — TRACE-R paired human–xPeerd evaluation
+
+[![Open Study 2 in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/khalid-saqr/xPeerd_Evaluation/blob/main/TRACE_R_reproducibility/TRACE_R_reproducible.ipynb)
+
+Study 2 uses **TRACE-R** to compare observable properties of xPeerd reports with human reports attached to the same manuscripts. The complete implementation, tests, environment definitions, reference hashes and public notebook are in [`TRACE_R_reproducibility/`](TRACE_R_reproducibility/).
+
+> TRACE-R measures textual structure, attested manuscript alignment, concern correspondence, category coverage, recommendation association and statistical agreement. It does **not** claim to establish scientific correctness, true novelty, complete flaw recall, true severity, epistemic harm or replacement of human reviewers.
+
+## Public source dataset and provenance
+
+- **Version DOI:** [`10.5281/zenodo.21479700`](https://doi.org/10.5281/zenodo.21479700)
+- **Archive:** `xpeerd_benchmark_study_2026_v1.0.0.zip`
+- **SHA-256:** `0ab7cb88d2b2db687b586ad303e017a9db0a8104e10f1b8e18c30b8f6a75129c`
+- **MD5:** `95bb05a1d2164d66db24a5176749aa77`
+- **Records:** 1,108
+- **Seed:** `20260723`
+
+The default public workflow resolves the Zenodo record, downloads the archive, verifies both checksums, validates the packaged schema and stops immediately if any pinned invariant fails.
+
+## Transparent cohort construction
+
+For manuscript record \(i\), let:
+
+- \(n_H(i)\) be the number of non-empty human review reports;
+- \(n_X(i)\) be the number of non-empty xPeerd reviewer fields among `Reviewer1` and `Reviewer2`;
+- \(m(i)=1\) when manuscript text is non-empty.
+
+The locked complete-case cohort is
+
+$$
+\mathcal{I}
+=
+\left\{
+i:
+n_H(i)=2
+\;\land\;
+n_X(i)=2
+\;\land\;
+m(i)=1
+\right\}.
+$$
+
+The criteria are applied sequentially and are mutually exclusive:
+
+| Outcome | Criterion | Records |
+|---|---|---:|
+| Excluded | \(n_H=3\) | 265 |
+| Excluded | \(n_H=4\) | 33 |
+| Excluded | \(n_H=5\) | 8 |
+| Excluded | \(n_H=2,\;m=1,\;n_X=0\) | 421 |
+| Excluded | \(n_H=2,\;m=1,\;n_X=1\) | 110 |
+| Excluded | \(n_H=2,\;m=0\) | 0 |
+| **Included** | \(n_H=2,\;m=1,\;n_X=2\) | **271** |
+| **Total** |  | **1,108** |
+
+The included dataset therefore contains
+
+$$
+271 \times (2\ \text{Human} + 2\ \text{xPeerd}) = 1{,}084
+$$
+
+review reports. Missing xPeerd reviewer reports are never imputed or reconstructed.
+
+## Deterministic concern-unit extraction
+
+Reports are segmented into sentence-like units. A unit must contain at least five words and satisfy a declared concern, action or concern-section rule. Each retained unit receives auditable binary or categorical features for:
+
+- explicit manuscript targeting;
+- explicit reasoning;
+- requested action;
+- scientific category;
+- presentation-only versus scientific relevance;
+- question form.
+
+The nine-category vocabulary is: statistics, study design, methods/reproducibility, data/results, interpretation/claims, literature/context, ethics/reporting, presentation/clarity and other scientific concerns.
+
+For a report with \(U\) extracted units and \(W\) words, concern density is
+
+$$
+D = \frac{1000U}{\max(1,W)}.
+$$
+
+Reports with no extracted units remain in the analysis with zero-valued unit-derived features.
+
+## The locked TRACE-R profile
+
+TRACE-R does not create a single epistemic-value score. Each dimension is retained separately. Unit-level values are averaged within a report; manuscript-level source profiles then aggregate the two reports from that source.
+
+| Dimension | Operational definition |
+|---|---|
+| **T — Targeting** | Fraction of units containing an explicit target cue such as a section, figure, table, method, result, sample or dataset |
+| **R — Reasoning** | Fraction of units containing an explicit rationale or consequence cue |
+| **A — Attested alignment** | Weighted manuscript-grounding proxy combining TF–IDF similarity and token overlap |
+| **C — Coverage** | Number of represented concern categories divided by the nine-category vocabulary |
+| **E — Executability** | Fraction of units containing an explicit requested action |
+| **R — Relevance** | Fraction of units not classified as presentation/clarity only |
+
+### Attested alignment
+
+Manuscripts are divided into 160-word chunks with a 40-word overlap. Concern units and manuscript chunks are represented by sublinear TF–IDF vectors using unigrams and bigrams.
+
+For concern \(u\), let \(p^*(u)\) be its highest-similarity manuscript chunk. Define
+
+$$
+s_{\mathrm{TFIDF}}(u)
+=
+\cos\!\left(
+\mathbf{v}_u,
+\mathbf{v}_{p^*(u)}
+\right),
+$$
+
+and let \(C_u\) and \(P_{p^*(u)}\) be the non-stopword content-token sets of the concern and selected chunk:
+
+$$
+o_{\mathrm{token}}(u)
+=
+\frac{
+\left|C_u \cap P_{p^*(u)}\right|
+}{
+\max(1,\left|C_u\right|)
+}.
+$$
+
+The locked attested-alignment proxy is
+
+$$
+A(u)
+=
+0.75\,s_{\mathrm{TFIDF}}(u)
++
+0.25\,o_{\mathrm{token}}(u).
+$$
+
+This establishes observable textual attestation, not whether the criticism is scientifically valid.
+
+### Coverage
+
+For report \(r\), with category breadth \(B_r\),
+
+$$
+C_r=\frac{B_r}{9}.
+$$
+
+## Unique human–xPeerd concern correspondence
+
+For each manuscript, human and xPeerd concern units are represented using the same sublinear unigram/bigram TF–IDF model. Let
+
+$$
+S_{uv}
+=
+\cos(\mathbf{v}^{H}_{u},\mathbf{v}^{X}_{v})
+$$
+
+be the human–xPeerd similarity matrix. A Hungarian linear assignment selects the unique pairing
+
+$$
+\pi^*
+=
+\arg\max_{\pi}
+\sum_{(u,v)\in\pi} S_{uv}.
+$$
+
+At threshold \(\tau\), accepted pairs are
+
+$$
+M_\tau
+=
+\left\{
+(u,v)\in\pi^* : S_{uv}\ge\tau
+\right\}.
+$$
+
+The locked primary threshold is \(\tau=0.35\); sensitivity is reported for
+
+$$
+\tau\in\{0.25,0.30,0.35,0.40,0.45,0.50\}.
+$$
+
+Two directional proxies are retained:
+
+$$
+\text{Human recovery proxy}
+=
+\frac{|M_{0.35}|}{\max(1,n_H)},
+$$
+
+$$
+\text{xPeerd alignment proxy}
+=
+\frac{|M_{0.35}|}{\max(1,n_X)},
+$$
+
+where \(n_H\) and \(n_X\) are the extracted concern-unit counts. These are correspondence measures, not precision or recall against scientific ground truth.
+
+Within-source reviewer redundancy is
+
+$$
+R_{\mathrm{dup}}
+=
+\frac{
+\#\{\text{uniquely assigned reviewer-unit pairs with }S\ge0.35\}
+}{
+\max(1,\min(n_1,n_2))
+}.
+$$
+
+## Statistical stress tests
+
+Association, agreement and source differences are reported separately.
+
+### Paired source differences
+
+For each manuscript-level metric,
+
+$$
+d_i=X_i-H_i,
+\qquad
+\Delta=\frac{1}{N}\sum_{i=1}^{N}d_i.
+$$
+
+TRACE-R reports:
+
+- the mean paired difference \(\Delta\);
+- percentile bootstrap 95% intervals from 2,000 paired resamples;
+- Wilcoxon signed-rank tests;
+- paired rank-biserial effect sizes;
+- two-sided sign-flip permutation tests with 1,999 replicates.
+
+The sign-flip Monte Carlo \(p\)-value is
+
+$$
+p
+=
+\frac{
+1+\#\left\{
+|\overline{d}^{\,*}|
+\ge
+|\overline{d}|
+\right\}
+}{
+B+1
+}.
+$$
+
+### Association and agreement
+
+For every paired metric, the package reports Pearson \(r\), Spearman \(\rho\), Kendall \(\tau_b\), distance correlation and a partial rank correlation that residualizes each source's ranked metric against that source's ranked report length.
+
+Lin's concordance correlation coefficient is
+
+$$
+\rho_c
+=
+\frac{
+2s_{HX}
+}{
+s_H^2+s_X^2+(\overline{H}-\overline{X})^2
+}.
+$$
+
+Error and bias diagnostics are
+
+$$
+\operatorname{MAE}
+=
+\frac{1}{N}\sum_{i=1}^{N}|X_i-H_i|,
+$$
+
+$$
+\operatorname{RMSE}
+=
+\sqrt{
+\frac{1}{N}\sum_{i=1}^{N}(X_i-H_i)^2
+},
+$$
+
+$$
+\text{bias}=\overline{d},
+\qquad
+\text{limits of agreement}
+=
+\overline{d}\pm1.96\,s_d.
+$$
+
+Spearman and concordance intervals use 2,000 bootstrap resamples; Spearman permutation tests use 1,999 permutations.
+
+### Category and recommendation correspondence
+
+For each concern category, TRACE-R reports prevalence, Jaccard overlap, phi correlation, exact McNemar tests and a Haldane-corrected paired odds ratio:
+
+$$
+\operatorname{OR}_{H}
+=
+\frac{n_{\text{xPeerd-only}}+0.5}{n_{\text{Human-only}}+0.5}.
+$$
+
+Recommendations are mapped to an ordinal scale:
+
+$$
+\text{reject}=0,
+\qquad
+\text{revise/reservations}=1,
+\qquad
+\text{approve}=2.
+$$
+
+The secondary recommendation analysis reports source-level consensus means, Spearman association, Lin concordance, quadratic weighted kappa, exact rounded agreement and ordinal MAE. Reviewer identities are not assumed to correspond across sources.
+
+All declared families of \(p\)-values are corrected with the Benjamini–Hochberg procedure.
+
+## Figures
+
+The five multipanel figures use complementary chart families rather than repeating a single representation:
+
+1. distribution and pairing: split violins, ECDF and source comparison;
+2. TRACE-R association/agreement: split polar profile, forest estimates and heatmap;
+3. correspondence and bias: hexbin/scatter, Bland–Altman and paired differences;
+4. category correspondence: lollipop, grouped/stacked bars and association display;
+5. recommendations and robustness: confusion/stacked displays and threshold-sensitivity curves.
+
+Each figure shows the Human/xPeerd legend once, in panel **a**, and exports both PDF and 400-dpi PNG formats.
+
+## Reproduce Study 2
+
+### Google Colab
+
+Open [`TRACE_R_reproducible.ipynb`](TRACE_R_reproducibility/TRACE_R_reproducible.ipynb) in a fresh runtime and run all cells. The notebook downloads the DOI-pinned source directly; Google Drive is not required.
+
+### Command line
+
 ```bash
-pip install pandas numpy scipy sentence-transformers matplotlib seaborn tqdm
+git clone https://github.com/khalid-saqr/xPeerd_Evaluation.git
+cd xPeerd_Evaluation/TRACE_R_reproducibility
 
----
-## Input Data Format
-Your input *.csv file must contain the following columns:
-Prompt: The input or prompt given to generate the peer review. This is used to detect the review type.
-Completion: The full text of the peer review report.
-Time (Optional): A timestamp in ISO format.
-Prompt,Completion,Time
-"Generate a peer review for a paper on topic X. /HCReview","This paper presents a novel method... The main weakness is in section 3...",2025-09-20T20:00:00Z
-"Simulate a debate between two reviewers. /DBReviewSim","Reviewer 1: I recommend acceptance... Reviewer 2: I must disagree, there are fatal flaws...",2025-09-20T20:05:10Z
----
-## Output Files
-The script generates the following files in the OUT_DIR (/content/xpeerd_outputs/):
-extracted_cases.json: A JSON file containing the structured data for each individual review after the extraction and ASJC classification stages.
-evaluation_results.json: The final, comprehensive JSON output. It contains all metadata, a copy of the case data, aggregate statistics, and correlation results.
-Figure1.png: ASJC Supergroup Classification Counts and Confidence.
-Figure2.png: Distribution of Editorial Decisions by ASJC Supergroup.
-Figure3.png: Report Length vs. Page Anchor Rate scatter plot.
-Figure4.png: Total Issues Detected by Review Type violin plot.
-Figure5.png: Compliance with Page Anchoring Rule bar charts.
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 
+trace-r --output results
+python compare_reference.py results
+```
+
+Offline execution with an already downloaded archive:
+
+```bash
+trace-r \
+  --input-zip /path/to/xpeerd_benchmark_study_2026_v1.0.0.zip \
+  --output results
+```
+
+### Docker
+
+```bash
+cd TRACE_R_reproducibility
+docker build -t trace-r:1.0.0 .
+docker run --rm \
+  -v "$PWD/results:/app/results" \
+  trace-r:1.0.0 \
+  --output /app/results
+```
+
+## Reproducibility evidence
+
+The locked package records:
+
+| Evidence | Result |
+|---|---:|
+| Analytical quality gates | **22/22 passed** |
+| Reference-output comparisons | **29/29 passed** |
+| Figure exports | **10/10 non-empty PDF/PNG files** |
+| Included manuscripts | **271** |
+| Excluded records | **837** |
+| Comparative reports | **1,084** |
+| Extracted concern units | **15,563** |
+
+Deterministic CSV tables are compared using exact hashes under the locked environment. Figure bytes are not required to be identical across platforms because fonts and rendering libraries can differ; figures are instead validated through their source tables, existence, nonzero size, panel/legend assertions and reference-output reproduction.
+
+See:
+
+- [`TRACE_R_reproducibility/README.md`](TRACE_R_reproducibility/README.md)
+- [`TRACE_R_reproducibility/METHODS.md`](TRACE_R_reproducibility/METHODS.md)
+- [`TRACE_R_reproducibility/REPRODUCTION_TEST_REPORT.md`](TRACE_R_reproducibility/REPRODUCTION_TEST_REPORT.md)
+- [`TRACE_R_reproducibility/PUBLICATION_CHECKLIST.md`](TRACE_R_reproducibility/PUBLICATION_CHECKLIST.md)
+
+## Repository layout
+
+```text
+.
+├── README.md
+├── xPeerdEvaluation.py
+└── TRACE_R_reproducibility/
+    ├── TRACE_R_reproducible.ipynb
+    ├── run_trace_r.py
+    ├── compare_reference.py
+    ├── config/
+    ├── checksums/
+    ├── reference/
+    ├── src/trace_r/
+    ├── tests/
+    ├── Dockerfile
+    ├── environment.yml
+    └── requirements-lock.txt
+```
+
+## Citation
+
+Cite the version-specific dataset DOI:
+
+> xPeerd Benchmark Study 2026, version 1.0.0. Zenodo. <https://doi.org/10.5281/zenodo.21479700>
+
+Software citation metadata is provided in [`TRACE_R_reproducibility/CITATION.cff`](TRACE_R_reproducibility/CITATION.cff).
