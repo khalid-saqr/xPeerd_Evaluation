@@ -14,8 +14,12 @@ trace-r="trace_r.cli:main"
 
 [tool.setuptools]
 package-dir={""="src"}
+
 [tool.setuptools.packages.find]
 where=["src"]
+
+[tool.setuptools.package-data]
+trace_r=["pipeline_parts/*.pyfrag"]
 
 [tool.pytest.ini_options]
 markers=["slow: full end-to-end reproduction"]
